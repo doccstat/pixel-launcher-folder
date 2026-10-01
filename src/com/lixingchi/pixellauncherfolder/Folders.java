@@ -21,12 +21,17 @@ final class Folders {
     static final class Folder {
         final String id;
         String name;
+        final String profile;
+        final long serial;
         final List<String> apps;
-        Folder(String id, String name, List<String> apps) {
-            this.id = id; this.name = name; this.apps = new ArrayList<>(apps);
+        Folder(String id, String name, String profile, long serial, List<String> apps) {
+            this.id = id; this.name = name; this.profile = profile; this.serial = serial; this.apps = new ArrayList<>(apps);
         }
         static Folder create(String name, List<String> apps) {
-            return new Folder(UUID.randomUUID().toString(), name, apps);
+            return new Folder(UUID.randomUUID().toString(), name, "personal", -1, apps);
+        }
+        static Folder create(String name, String profile, long serial, List<String> apps) {
+            return new Folder(UUID.randomUUID().toString(), name, profile, serial, apps);
         }
     }
 
@@ -34,6 +39,7 @@ final class Folders {
         if (raw == null || raw.length() > MAX_BYTES) throw new JSONException("Invalid configuration size");
         JSONObject root = new JSONObject(raw);
         if (root.getInt("version") != 1) throw new JSONException("Unsupported folder format");
+        keepInDrawer(raw);
         JSONArray array = root.getJSONArray("folders");
         if (array.length() > MAX_FOLDERS) throw new JSONException("Too many folders");
         List<Folder> result = new ArrayList<>();
@@ -41,8 +47,12 @@ final class Folders {
         for (int i = 0; i < array.length(); i++) {
             JSONObject item = array.getJSONObject(i);
             String id = item.getString("id"), name = item.getString("name").trim();
+            String profile = item.optString("profile", "personal");
+            long serial = item.optLong("serial", -1);
+            if (serial < -1 || (profile.equals("work") && serial < 0)) throw new JSONException("Invalid profile serial");
             if (id.isEmpty() || id.length() > 64 || !ids.add(id)) throw new JSONException("Invalid folder ID");
             if (name.isEmpty() || name.length() > 48) throw new JSONException("Use a folder name of 1–48 characters");
+            if (!profile.equals("personal") && !profile.equals("work")) throw new JSONException("Choose Personal or Work");
             JSONArray entries = item.getJSONArray("apps");
             if (entries.length() > MAX_APPS) throw new JSONException("Use at most 100 apps per folder");
             List<String> apps = new ArrayList<>();
@@ -56,18 +66,20 @@ final class Folders {
                 key = component.flattenToString();
                 if (seen.add(key)) apps.add(key);
             }
-            result.add(new Folder(id, name, apps));
+            result.add(new Folder(id, name, profile, serial, apps));
         }
         return result;
     }
 
-    static String encode(List<Folder> folders) throws JSONException {
+    static String encode(List<Folder> folders) throws JSONException { return encode(folders, true); }
+
+    static String encode(List<Folder> folders, boolean keep) throws JSONException {
         JSONArray array = new JSONArray();
         for (Folder folder : folders) {
-            array.put(new JSONObject().put("id", folder.id).put("name", folder.name.trim())
+            array.put(new JSONObject().put("id", folder.id).put("name", folder.name.trim()).put("profile", folder.profile).put("serial", folder.serial)
                     .put("apps", new JSONArray(folder.apps)));
         }
-        String raw = new JSONObject().put("version", 1).put("folders", array).toString();
+        String raw = new JSONObject().put("version", 1).put("keepInDrawer", keep).put("folders", array).toString();
         parse(raw); // Reject invalid changes before touching durable state.
         return raw;
     }
@@ -78,9 +90,41 @@ final class Folders {
     }
 
     static void save(Context context, List<Folder> folders) throws JSONException {
-        String raw = encode(folders);
+        String raw = encode(folders, keepInDrawer(read(context)));
         if (!context.getSharedPreferences("folders", Context.MODE_PRIVATE).edit().putString("json", raw).commit())
             throw new IllegalStateException("Could not save folders");
         context.getContentResolver().notifyChange(URI, null);
+    }
+
+    static boolean keepInDrawer(String raw) throws JSONException {
+        JSONObject root = new JSONObject(raw);
+        if (!root.has("keepInDrawer")) return true;
+        Object value = root.get("keepInDrawer");
+        if (!(value instanceof Boolean)) throw new JSONException("Invalid display option");
+        return (Boolean) value;
+    }
+
+    static void setKeepInDrawer(Context context, boolean keep) throws JSONException {
+        String raw = encode(parse(read(context)), keep);
+        if (!context.getSharedPreferences("folders", Context.MODE_PRIVATE).edit().putString("json", raw).commit())
+            throw new IllegalStateException("Could not save display option");
+        context.getContentResolver().notifyChange(URI, null);
+    }
+
+    static boolean inFolders(List<Folder> folders, String component) {
+        for (Folder folder : folders) if (folder.apps.contains(component)) return true;
+        return false;
+    }
+
+    static boolean shouldHide(boolean keep, List<Folder> folders, String kind, long serial,
+            long personalSerial, String component) {
+        if (keep) return false;
+        for (Folder folder : folders)
+            if (matches(folder, kind, serial, personalSerial) && folder.apps.contains(component)) return true;
+        return false;
+    }
+
+    static boolean matches(Folder folder, String kind, long serial, long personalSerial) {
+        return folder.profile.equals(kind) && (folder.serial < 0 ? personalSerial : folder.serial) == serial;
     }
 }

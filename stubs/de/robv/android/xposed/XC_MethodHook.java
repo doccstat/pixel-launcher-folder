@@ -20,5 +20,6 @@ public abstract class XC_MethodHook {
     }
 
     public final class Unhook {
+        public void unhook() {}
     }
 }

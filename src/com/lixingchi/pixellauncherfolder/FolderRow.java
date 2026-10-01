@@ -25,21 +25,23 @@ import java.util.concurrent.TimeUnit;
 
 /** No service/polling: one shared, idle-expiring worker and an attachment-scoped observer. */
 final class FolderRow extends HorizontalScrollView {
-    private static final ThreadPoolExecutor IO = new ThreadPoolExecutor(0, 1, 5, TimeUnit.SECONDS,
+    static final ThreadPoolExecutor IO = new ThreadPoolExecutor(0, 1, 5, TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(), task -> { Thread t = new Thread(task, "pixel-folders-read"); t.setDaemon(true); return t; });
     private final LinearLayout content;
     private final boolean live;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, AppEntry> apps = new HashMap<>();
-    private boolean attached, registered, loading, reload, personalPage = true;
-    private int requestedVisibility = VISIBLE;
+    private boolean attached, registered, loading, reload;
+    private String profile;
+    private long serial;
+    private int generation;
     private AlertDialog folderDialog;
     private final ContentObserver observer = new ContentObserver(main) {
         @Override public void onChange(boolean self) { refresh(); }
     };
 
-    FolderRow(Context context, boolean live) {
-        super(context); this.live = live;
+    FolderRow(Context context, String profile, long serial, boolean live) {
+        super(context); this.live = live; this.profile = profile; this.serial = serial;
         setHorizontalScrollBarEnabled(false); setFillViewport(false);
         setLayoutParams(new LinearLayout.LayoutParams(-1, expectedHeight()));
         content = new LinearLayout(context); content.setGravity(Gravity.CENTER_VERTICAL);
@@ -49,13 +51,12 @@ final class FolderRow extends HorizontalScrollView {
 
     int expectedHeight() { return Ui.dp(getContext(), 76 + 16 * Math.max(1, getResources().getConfiguration().fontScale)); }
 
-    void setPersonalPage(boolean personal) {
-        personalPage = personal; setVisibility(requestedVisibility);
-        if (!personal && folderDialog != null) folderDialog.dismiss();
-    }
-    @Override public void setVisibility(int visibility) {
-        requestedVisibility = visibility;
-        super.setVisibility(personalPage ? visibility : INVISIBLE);
+    void bindProfile(String kind, long profileSerial) {
+        if (!profile.equals(kind) || serial != profileSerial) {
+            profile = kind; serial = profileSerial; generation++; content.removeAllViews(); apps.clear();
+            if (folderDialog != null) { folderDialog.dismiss(); folderDialog = null; }
+        }
+        refresh();
     }
 
     @Override protected void onAttachedToWindow() {
@@ -67,7 +68,7 @@ final class FolderRow extends HorizontalScrollView {
         refresh();
     }
     @Override protected void onDetachedFromWindow() {
-        attached = false;
+        attached = false; generation++;
         if (registered) { getContext().getContentResolver().unregisterContentObserver(observer); registered = false; }
         if (folderDialog != null) { folderDialog.dismiss(); folderDialog = null; }
         super.onDetachedFromWindow();
@@ -81,6 +82,7 @@ final class FolderRow extends HorizontalScrollView {
         if (!attached) return;
         if (loading) { reload = true; return; }
         loading = true;
+        final String readProfile = profile; final long readSerial = serial; final int readGeneration = generation;
         IO.execute(() -> {
             try {
                 String raw;
@@ -90,10 +92,14 @@ final class FolderRow extends HorizontalScrollView {
                         raw = cursor.getString(0);
                     }
                 } else raw = Folders.read(getContext());
-                List<Folders.Folder> folders = Folders.parse(raw);
-                List<AppEntry> entries = AppEntry.list(getContext());
+                List<Folders.Folder> allFolders = Folders.parse(raw);
+                List<Folders.Folder> folders = new java.util.ArrayList<>();
+                long profileSerial = readSerial < 0 ? Profiles.personalSerial(getContext()) : readSerial;
+                for (Folders.Folder folder : allFolders)
+                    if (Folders.matches(folder, readProfile, profileSerial, Profiles.personalSerial(getContext()))) folders.add(folder);
+                List<AppEntry> entries = AppEntry.list(getContext(), readProfile, readSerial);
                 main.post(() -> {
-                    if (attached) {
+                    if (attached && readGeneration == generation) {
                         apps.clear(); for (AppEntry e : entries) apps.put(e.key, e);
                         render(folders);
                     }
@@ -101,9 +107,9 @@ final class FolderRow extends HorizontalScrollView {
                 });
             } catch (Exception error) {
                 main.post(() -> {
-                    if (attached) {
+                    if (attached && readGeneration == generation) {
                         content.removeAllViews();
-                        content.addView(Ui.button(getContext(), "Open folder settings", this::settings));
+                        content.addView(Ui.button(getContext(), "Profile unavailable · Edit folders", this::settings));
                     }
                     finishLoad();
                 });
@@ -123,8 +129,10 @@ final class FolderRow extends HorizontalScrollView {
         for (Folders.Folder folder : folders) {
             LinearLayout card = Ui.column(getContext(), 6); card.setGravity(Gravity.CENTER);
             GridLayout preview = new GridLayout(getContext()); preview.setColumnCount(2); preview.setRowCount(2);
-            preview.setPadding(Ui.dp(getContext(), 6), Ui.dp(getContext(), 6), Ui.dp(getContext(), 6), Ui.dp(getContext(), 6));
-            preview.setBackground(Ui.rounded(getContext()));
+            preview.setPadding(Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), Ui.dp(getContext(), 8));
+            android.graphics.drawable.GradientDrawable circle = new android.graphics.drawable.GradientDrawable();
+            circle.setShape(android.graphics.drawable.GradientDrawable.OVAL); circle.setColor(Ui.surface(getContext()));
+            preview.setBackground(circle); preview.setClipToOutline(true);
             for (int i = 0; i < 4; i++) {
                 ImageView icon = new ImageView(getContext());
                 if (i < folder.apps.size()) {
@@ -132,7 +140,7 @@ final class FolderRow extends HorizontalScrollView {
                 }
                 preview.addView(icon, new android.view.ViewGroup.LayoutParams(Ui.dp(getContext(), 19), Ui.dp(getContext(), 19)));
             }
-            card.addView(preview);
+            card.addView(preview, new LinearLayout.LayoutParams(Ui.dp(getContext(), 54), Ui.dp(getContext(), 54)));
             TextView label = Ui.text(getContext(), folder.name, 12); label.setMaxLines(1);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
             card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
@@ -150,7 +158,7 @@ final class FolderRow extends HorizontalScrollView {
         for (String key : folder.apps) {
             AppEntry e = entry(key);
             android.widget.Button item = Ui.button(getContext(), e.label, () -> {
-                try { AppEntry.launch(getContext(), key); if (folderDialog != null) folderDialog.dismiss(); }
+                try { AppEntry.launch(getContext(), key, folder.profile, folder.serial); if (folderDialog != null) folderDialog.dismiss(); }
                 catch (RuntimeException error) { Toast.makeText(getContext(), "This app is unavailable", Toast.LENGTH_SHORT).show(); }
             });
             item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
