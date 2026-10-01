@@ -60,6 +60,13 @@ final class FolderRow extends HorizontalScrollView {
     // app cell when the user's icon-size setting is large.
     int expectedHeight() { return Ui.dp(getContext(), 92 + 20 * Math.max(1, getResources().getConfiguration().fontScale)); }
 
+    @Override protected void onMeasure(int widthSpec, int heightSpec) {
+        int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
+                ? Ui.dp(getContext(), 80) : MeasureSpec.getSize(widthSpec);
+        super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(expectedHeight(), MeasureSpec.EXACTLY));
+    }
+
     void bindFolderIndex(int index) { folderIndex = index; refresh(); }
 
     void bindProfile(String kind, long profileSerial) {
@@ -142,7 +149,7 @@ final class FolderRow extends HorizontalScrollView {
             folders = selected == null ? java.util.Collections.emptyList() : java.util.Collections.singletonList(selected);
         }
         for (Folders.Folder folder : folders) {
-            LinearLayout card = Ui.column(getContext(), 6); card.setGravity(Gravity.CENTER);
+            LinearLayout card = Ui.column(getContext(), single ? 0 : 6); card.setGravity(Gravity.CENTER);
             GridLayout preview = new GridLayout(getContext()); preview.setColumnCount(2); preview.setRowCount(2);
             preview.setPadding(Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), Ui.dp(getContext(), 8));
             android.graphics.drawable.GradientDrawable circle = new android.graphics.drawable.GradientDrawable();
