@@ -10,7 +10,7 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.GridLayout;
-import android.widget.HorizontalScrollView;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -24,7 +24,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /** No service/polling: one shared, idle-expiring worker and an attachment-scoped observer. */
-final class FolderRow extends HorizontalScrollView {
+final class FolderRow extends FrameLayout {
     static final ThreadPoolExecutor IO = new ThreadPoolExecutor(0, 1, 5, TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(), task -> { Thread t = new Thread(task, "pixel-folders-read"); t.setDaemon(true); return t; });
     private final LinearLayout content;
@@ -51,14 +51,16 @@ final class FolderRow extends HorizontalScrollView {
         super(context); this.live = live; this.single = single; this.profile = profile; this.serial = serial;
         topInset = single && context.getResources().getDisplayMetrics().widthPixels < 1500
                 ? Ui.dp(context, 40) : 0;
-        setHorizontalScrollBarEnabled(false); setFillViewport(single);
+        setClipChildren(false); setClipToPadding(false);
         setLayoutParams(new LinearLayout.LayoutParams(-1, expectedHeight()));
         content = new LinearLayout(context); content.setGravity(single
                 ? (topInset == 0 ? Gravity.CENTER : Gravity.CENTER_HORIZONTAL | Gravity.TOP)
                 : Gravity.CENTER_VERTICAL);
         content.setPadding(single ? 0 : Ui.dp(context, 12), topInset == 0 ? Ui.dp(context, 4) : topInset,
                 single ? 0 : Ui.dp(context, 12), Ui.dp(context, 4));
-        addView(content, new HorizontalScrollView.LayoutParams(single ? -1 : -2, -1));
+        // A direct child is important for grid-cell measurement. The settings
+        // preview has a bounded number of folders and does not need scrolling.
+        addView(content, new FrameLayout.LayoutParams(single ? -1 : -2, -1));
     }
 
     // Pixel Launcher uses roughly 52–66 dp app icons on this device. Keep the
