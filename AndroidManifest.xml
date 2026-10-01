@@ -1,0 +1,21 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.lixingchi.pixellauncherfolder" android:versionCode="1" android:versionName="0.1.0">
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="37" />
+    <queries>
+        <package android:name="com.google.android.apps.nexuslauncher" />
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+    </queries>
+    <application android:label="Pixel Launcher Folders" android:icon="@drawable/ic_folder"
+        android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false"
+        android:supportsRtl="true">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity>
+        <provider android:name=".FolderProvider" android:authorities="com.lixingchi.pixellauncherfolder.config"
+            android:exported="true" android:grantUriPermissions="false" />
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="A personal-app folder row inside Pixel Launcher's app drawer" />
+        <meta-data android:name="xposedminversion" android:value="93" />
+        <meta-data android:name="xposedscope" android:value="com.google.android.apps.nexuslauncher" />
+    </application>
+</manifest>

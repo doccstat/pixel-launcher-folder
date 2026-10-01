@@ -1,0 +1,171 @@
+package com.lixingchi.pixellauncherfolder;
+
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.Intent;
+import android.database.ContentObserver;
+import android.database.Cursor;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.GridLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+/** No service/polling: one shared, idle-expiring worker and an attachment-scoped observer. */
+final class FolderRow extends HorizontalScrollView {
+    private static final ThreadPoolExecutor IO = new ThreadPoolExecutor(0, 1, 5, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(), task -> { Thread t = new Thread(task, "pixel-folders-read"); t.setDaemon(true); return t; });
+    private final LinearLayout content;
+    private final boolean live;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final Map<String, AppEntry> apps = new HashMap<>();
+    private boolean attached, registered, loading, reload, personalPage = true;
+    private int requestedVisibility = VISIBLE;
+    private AlertDialog folderDialog;
+    private final ContentObserver observer = new ContentObserver(main) {
+        @Override public void onChange(boolean self) { refresh(); }
+    };
+
+    FolderRow(Context context, boolean live) {
+        super(context); this.live = live;
+        setHorizontalScrollBarEnabled(false); setFillViewport(false);
+        setLayoutParams(new LinearLayout.LayoutParams(-1, expectedHeight()));
+        content = new LinearLayout(context); content.setGravity(Gravity.CENTER_VERTICAL);
+        content.setPadding(Ui.dp(context, 12), Ui.dp(context, 4), Ui.dp(context, 12), Ui.dp(context, 4));
+        addView(content, new HorizontalScrollView.LayoutParams(-2, -1));
+    }
+
+    int expectedHeight() { return Ui.dp(getContext(), 76 + 16 * Math.max(1, getResources().getConfiguration().fontScale)); }
+
+    void setPersonalPage(boolean personal) {
+        personalPage = personal; setVisibility(requestedVisibility);
+        if (!personal && folderDialog != null) folderDialog.dismiss();
+    }
+    @Override public void setVisibility(int visibility) {
+        requestedVisibility = visibility;
+        super.setVisibility(personalPage ? visibility : INVISIBLE);
+    }
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow(); attached = true;
+        if (live) {
+            try { getContext().getContentResolver().registerContentObserver(Folders.URI, false, observer); registered = true; }
+            catch (RuntimeException ignored) { }
+        }
+        refresh();
+    }
+    @Override protected void onDetachedFromWindow() {
+        attached = false;
+        if (registered) { getContext().getContentResolver().unregisterContentObserver(observer); registered = false; }
+        if (folderDialog != null) { folderDialog.dismiss(); folderDialog = null; }
+        super.onDetachedFromWindow();
+    }
+    @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        if (visibility == VISIBLE && attached) refresh();
+    }
+
+    private void refresh() {
+        if (!attached) return;
+        if (loading) { reload = true; return; }
+        loading = true;
+        IO.execute(() -> {
+            try {
+                String raw;
+                if (live) {
+                    try (Cursor cursor = getContext().getContentResolver().query(Folders.URI, new String[]{"json"}, null, null, null)) {
+                        if (cursor == null || !cursor.moveToFirst()) throw new IllegalStateException("No folder configuration");
+                        raw = cursor.getString(0);
+                    }
+                } else raw = Folders.read(getContext());
+                List<Folders.Folder> folders = Folders.parse(raw);
+                List<AppEntry> entries = AppEntry.list(getContext());
+                main.post(() -> {
+                    if (attached) {
+                        apps.clear(); for (AppEntry e : entries) apps.put(e.key, e);
+                        render(folders);
+                    }
+                    finishLoad();
+                });
+            } catch (Exception error) {
+                main.post(() -> {
+                    if (attached) {
+                        content.removeAllViews();
+                        content.addView(Ui.button(getContext(), "Open folder settings", this::settings));
+                    }
+                    finishLoad();
+                });
+            }
+        });
+    }
+    private void finishLoad() { loading = false; if (reload) { reload = false; refresh(); } }
+    private void settings() {
+        try { getContext().startActivity(new Intent().setClassName(Folders.PACKAGE, Folders.PACKAGE + ".MainActivity")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+        catch (RuntimeException error) { Toast.makeText(getContext(), "Folder settings are unavailable", Toast.LENGTH_SHORT).show(); }
+    }
+    private AppEntry entry(String key) { AppEntry e = apps.get(key); return e == null ? new AppEntry(key) : e; }
+
+    private void render(List<Folders.Folder> folders) {
+        content.removeAllViews();
+        for (Folders.Folder folder : folders) {
+            LinearLayout card = Ui.column(getContext(), 6); card.setGravity(Gravity.CENTER);
+            GridLayout preview = new GridLayout(getContext()); preview.setColumnCount(2); preview.setRowCount(2);
+            preview.setPadding(Ui.dp(getContext(), 6), Ui.dp(getContext(), 6), Ui.dp(getContext(), 6), Ui.dp(getContext(), 6));
+            preview.setBackground(Ui.rounded(getContext()));
+            for (int i = 0; i < 4; i++) {
+                ImageView icon = new ImageView(getContext());
+                if (i < folder.apps.size()) {
+                    try { icon.setImageDrawable(entry(folder.apps.get(i)).icon(getContext())); } catch (RuntimeException ignored) { }
+                }
+                preview.addView(icon, new android.view.ViewGroup.LayoutParams(Ui.dp(getContext(), 19), Ui.dp(getContext(), 19)));
+            }
+            card.addView(preview);
+            TextView label = Ui.text(getContext(), folder.name, 12); label.setMaxLines(1);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
+            card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
+            card.setOnClickListener(v -> open(folder)); card.setOnLongClickListener(v -> { settings(); return true; });
+            content.addView(card, new LinearLayout.LayoutParams(Ui.dp(getContext(), 88), -1));
+        }
+        content.addView(Ui.button(getContext(), folders.isEmpty() ? "+ Create folders" : "Edit", this::settings),
+                new LinearLayout.LayoutParams(-2, Ui.dp(getContext(), 52)));
+    }
+
+    private void open(Folders.Folder folder) {
+        if (folderDialog != null) folderDialog.dismiss();
+        ScrollView scroll = new ScrollView(getContext());
+        LinearLayout list = Ui.column(getContext(), 12); scroll.addView(list);
+        for (String key : folder.apps) {
+            AppEntry e = entry(key);
+            android.widget.Button item = Ui.button(getContext(), e.label, () -> {
+                try { AppEntry.launch(getContext(), key); if (folderDialog != null) folderDialog.dismiss(); }
+                catch (RuntimeException error) { Toast.makeText(getContext(), "This app is unavailable", Toast.LENGTH_SHORT).show(); }
+            });
+            item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            try {
+                android.graphics.drawable.Drawable icon = e.icon(getContext());
+                icon.setBounds(0, 0, Ui.dp(getContext(), 36), Ui.dp(getContext(), 36));
+                item.setCompoundDrawablesRelative(icon, null, null, null); item.setCompoundDrawablePadding(Ui.dp(getContext(), 12));
+            } catch (RuntimeException ignored) { }
+            list.addView(item);
+        }
+        if (folder.apps.isEmpty()) list.addView(Ui.text(getContext(), "This folder is empty. Add apps in folder settings.", 16));
+        folderDialog = new AlertDialog.Builder(getContext()).setTitle(folder.name).setView(scroll)
+                .setNeutralButton("Edit folders", (d, w) -> settings()).setPositiveButton("Close", null).create();
+        folderDialog.show();
+        if (folderDialog.getWindow() != null) folderDialog.getWindow().setLayout(-1,
+                Math.min(Ui.dp(getContext(), 520), getResources().getDisplayMetrics().heightPixels * 3 / 4));
+    }
+}
