@@ -66,25 +66,72 @@ public final class FolderTests extends Instrumentation {
             check(AppEntry.list(context).stream().anyMatch(e -> e.key.equals(normalized.get(0).apps.get(0))), "Own launcher activity visible");
             try { AppEntry.launch(context, Folders.PACKAGE + "/.NoSuchActivity"); throw new AssertionError("Arbitrary activity launched"); }
             catch (RuntimeException expected) { checks++; }
+            check(Folders.keepInDrawer("{\"version\":1,\"folders\":[]}"), "Legacy defaults keep apps");
+            check(normalized.get(0).profile.equals("personal") && normalized.get(0).serial == -1, "Legacy folders remain Personal");
+            Folders.setKeepInDrawer(context, false);
+            check(!Folders.keepInDrawer(Folders.read(context)), "Folder-only option persisted");
+            Folders.save(context, normalized);
+            check(!Folders.keepInDrawer(Folders.read(context)), "Folder edits preserve display option");
+            Folders.setKeepInDrawer(context, true);
+            check(Folders.keepInDrawer(Folders.read(context)), "Keep-apps option restored");
+            long owner = Profiles.personalSerial(context);
+            String component = normalized.get(0).apps.get(0);
+            List<Folders.Folder> isolated = Arrays.asList(Folders.Folder.create("Work", "work", 100, Arrays.asList(component)));
+            check(Folders.shouldHide(false, isolated, "work", 100, owner, component), "Folder-only hides same profile copy");
+            check(!Folders.shouldHide(true, isolated, "work", 100, owner, component), "Keep mode preserves app list copy");
+            check(!Folders.shouldHide(false, isolated, "personal", owner, owner, component), "Work membership never hides Personal copy");
+            check(!Folders.shouldHide(false, isolated, "work", 101, owner, component), "Removed/recreated profile serial never matches");
+            check(!Folders.shouldHide(false, isolated, "work", 100, owner, "other/.Activity"), "Unassigned apps preserved");
+            check(Folders.parse(Folders.encode(isolated)).get(0).serial == 100, "Work serial round trip");
+            reject("{\"version\":1,\"folders\":[{\"id\":\"a\",\"name\":\"A\",\"profile\":\"private\",\"serial\":11,\"apps\":[]}]}");
+            reject("{\"version\":1,\"keepInDrawer\":\"false\",\"folders\":[]}");
+            List<Profiles> profiles = Profiles.available(context);
+            check(profiles.stream().anyMatch(p -> p.kind.equals("personal")), "Personal profile discovered");
+            for (Profiles profile : profiles) {
+                check(profile.kind.equals("personal") || profile.kind.equals("work"), "Only Personal/managed Work exposed");
+                if (profile.usable(context)) for (AppEntry app : AppEntry.list(context, profile.kind, profile.serial))
+                    if (!app.info.getUser().equals(profile.user)) throw new AssertionError("Cross-profile picker leak");
+            }
+            checks++;
+            result.putString("profiles", "Accessible profiles: " + profiles);
             activity = startActivitySync(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             final Activity screen = activity;
             waitForIdleSync();
             runOnMainSync(() -> {
                 check(find(screen.getWindow().getDecorView(), "Drawer folders") != null, "Editor opened");
-                check(find(screen.getWindow().getDecorView(), "Test · 1") != null, "Saved folder rendered");
-                View preview = find(screen.getWindow().getDecorView(), "Preview folder row");
-                check(preview != null, "Preview button"); preview.performClick();
+                check(find(screen.getWindow().getDecorView(), "Test · Personal · 1") != null, "Saved folder rendered");
+                check(find(screen.getWindow().getDecorView(), "Keep apps in the main app list too") != null, "Display option rendered");
+            });
+            // Exercise the actual row independently of Vector. Draw only our view,
+            // including when the lockscreen covers the Activity.
+            final FolderRow[] preview = new FolderRow[1];
+            runOnMainSync(() -> {
+                preview[0] = new FolderRow(screen, "personal", Profiles.personalSerial(context), false);
+                screen.setContentView(preview[0]);
             });
             waitForIdleSync();
-            // Read only our foreground view tree; no input to any other package.
-            android.os.SystemClock.sleep(750);
-            android.graphics.Bitmap bitmap = getUiAutomation().takeScreenshot();
-            if (bitmap != null) {
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS);
+            waitForIdleSync();
+            runOnMainSync(() -> {
+                check(find(preview[0], "Test") != null, "Personal folder preview loaded");
+                android.widget.LinearLayout content = (android.widget.LinearLayout) preview[0].getChildAt(0);
+                android.view.ViewGroup card = (android.view.ViewGroup) content.getChildAt(0);
+                View icons = card.getChildAt(0);
+                check(((android.graphics.drawable.GradientDrawable) icons.getBackground()).getShape()
+                        == android.graphics.drawable.GradientDrawable.OVAL, "Circular folder background");
+                check(((android.view.ViewGroup) icons).getChildCount() == 4, "Four preview positions");
+                int width = Ui.dp(context, 400), height = preview[0].expectedHeight();
+                preview[0].measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+                preview[0].layout(0, 0, width, height);
+                android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
+                android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap); canvas.drawColor(Ui.dark(context) ? 0xff17191e : 0xfffafaff);
+                preview[0].draw(canvas);
                 try (java.io.FileOutputStream output = context.openFileOutput("test-preview.png", Context.MODE_PRIVATE)) {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
-                }
+                } catch (java.io.IOException error) { throw new AssertionError(error); }
                 bitmap.recycle();
-            }
+            });
             result.putString("stream", "PASS: " + checks + " checks; editor and preview opened; original preferences restored.\n");
         } catch (Throwable error) {
             code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(error));

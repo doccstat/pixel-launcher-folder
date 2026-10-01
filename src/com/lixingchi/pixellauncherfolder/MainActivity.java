@@ -14,6 +14,7 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.Toast;
+import android.widget.CheckBox;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -50,13 +51,18 @@ public final class MainActivity extends Activity {
     private void render() {
         body.removeAllViews();
         body.addView(Ui.text(this, "Drawer folders", 28));
-        body.addView(Ui.text(this, "Your folders appear above the app list. Apps stay available in the normal drawer and search.", 16));
+        body.addView(Ui.text(this, "Circular folders appear at the top of each profile’s app list, below the tabs. Search always finds your apps.", 16));
         body.addView(Ui.text(this, "One-time setup: enable this module in Vector for Pixel Launcher only, then restart the launcher yourself. This app does not change Vector settings or restart other apps.", 14));
-        body.addView(Ui.button(this, "Preview folder row", () -> {
-            FolderRow row = new FolderRow(this, false);
-            new AlertDialog.Builder(this).setTitle("Folder row preview").setView(row)
-                .setPositiveButton("Close", null).show();
-        }));
+        CheckBox keep = new CheckBox(this); keep.setText("Keep apps in the main app list too"); keep.setTextColor(Ui.text(this));
+        try { keep.setChecked(Folders.keepInDrawer(Folders.read(this))); } catch (Exception e) { message(e.getMessage()); }
+        keep.setOnCheckedChangeListener((button, checked) -> { try { Folders.setKeepInDrawer(this, checked); } catch (Exception e) { message(e.getMessage()); render(); } });
+        body.addView(keep);
+        for (Profiles profile : Profiles.available(this)) {
+            body.addView(Ui.button(this, "Preview " + (profile.kind.equals("work") ? "Work" : "Personal") + " folders", () -> {
+                FolderRow row = new FolderRow(this, profile.kind, profile.serial, false);
+                new AlertDialog.Builder(this).setTitle("Folder preview").setView(row).setPositiveButton("Close", null).show();
+            }));
+        }
         body.addView(Ui.button(this, "New folder", () -> {
             if (folders.size() >= Folders.MAX_FOLDERS) { message("Use at most 24 folders"); return; }
             edit(null);
@@ -67,7 +73,7 @@ public final class MainActivity extends Activity {
             Folders.Folder folder = folders.get(i);
             LinearLayout line = new LinearLayout(this);
             line.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            View edit = Ui.button(this, folder.name + " · " + folder.apps.size(), () -> edit(folder));
+            View edit = Ui.button(this, folder.name + " · " + (folder.profile.equals("work") ? "Work" : "Personal") + " · " + folder.apps.size(), () -> edit(folder));
             line.addView(edit, new LinearLayout.LayoutParams(0, -2, 1));
             android.widget.Button up = Ui.button(this, "↑", () -> move(index, -1));
             up.setContentDescription("Move " + folder.name + " up"); up.setEnabled(i > 0);
@@ -94,11 +100,35 @@ public final class MainActivity extends Activity {
         EditText name = new EditText(this); name.setSingleLine(true); name.setHint("Folder name");
         name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(48)});
         name.setText(original == null ? "" : original.name); form.addView(name);
+        List<Profiles> availableProfiles = Profiles.available(this);
+        if (availableProfiles.isEmpty()) { message("No accessible profiles"); return; }
+        long originalSerial = original == null ? -2 : original.serial < 0 ? Profiles.personalSerial(this) : original.serial;
+        int initialIndex = 0;
+        if (original != null) {
+            boolean found = false;
+            for (int i = 0; i < availableProfiles.size(); i++) if (availableProfiles.get(i).serial == originalSerial
+                    && availableProfiles.get(i).kind.equals(original.profile)) { initialIndex = i; found = true; }
+            if (!found) { availableProfiles.add(new Profiles(null, originalSerial, original.profile)); initialIndex = availableProfiles.size() - 1; }
+        }
+        android.widget.Spinner profilePicker = new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<Profiles> profileAdapter = new android.widget.ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, availableProfiles);
+        profileAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        profilePicker.setAdapter(profileAdapter); profilePicker.setSelection(initialIndex);
+        // Changing an existing folder's profile would silently retarget its components.
+        profilePicker.setEnabled(original == null); form.addView(profilePicker);
         Set<String> selected = new LinkedHashSet<>();
         if (original != null) selected.addAll(original.apps);
         android.widget.Button choose = new android.widget.Button(this);
         choose.setAllCaps(false); choose.setText("Choose apps · " + selected.size());
-        choose.setOnClickListener(v -> pickApps(selected, () -> choose.setText("Choose apps · " + selected.size())));
+        choose.setOnClickListener(v -> pickApps(selected, (Profiles) profilePicker.getSelectedItem(), () -> choose.setText("Choose apps · " + selected.size())));
+        profilePicker.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            private int previous = profilePicker.getSelectedItemPosition();
+            public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                if (position != previous) { selected.clear(); choose.setText("Choose apps · 0"); previous = position; }
+            }
+        });
         form.addView(choose);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle(original == null ? "New folder" : "Edit folder")
                 .setView(form).setPositiveButton("Save", null).setNegativeButton("Cancel", null)
@@ -108,8 +138,9 @@ public final class MainActivity extends Activity {
                 String title = name.getText().toString().trim();
                 if (title.isEmpty()) { name.setError("Enter a folder name"); return; }
                 List<Folders.Folder> next = new ArrayList<>(folders);
-                Folders.Folder updated = original == null ? Folders.Folder.create(title, new ArrayList<>(selected))
-                        : new Folders.Folder(original.id, title, new ArrayList<>(selected));
+                Profiles profile = (Profiles) profilePicker.getSelectedItem();
+                Folders.Folder updated = original == null ? Folders.Folder.create(title, profile.kind, profile.serial, new ArrayList<>(selected))
+                        : new Folders.Folder(original.id, title, original.profile, original.serial, new ArrayList<>(selected));
                 if (original == null) next.add(updated); else next.set(folders.indexOf(original), updated);
                 if (save(next)) dialog.dismiss();
             });
@@ -124,9 +155,9 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
-    private void pickApps(Set<String> selected, Runnable done) {
+    private void pickApps(Set<String> selected, Profiles profile, Runnable done) {
         final List<AppEntry> all;
-        try { all = AppEntry.list(this); } catch (RuntimeException e) { message("Could not load apps"); return; }
+        try { all = AppEntry.list(this, profile.kind, profile.serial); } catch (RuntimeException e) { message(e.getMessage()); return; }
         HashSet<String> available = new HashSet<>();
         for (AppEntry e : all) available.add(e.key);
         for (String missing : selected) if (!available.contains(missing)) all.add(new AppEntry(missing));
@@ -166,7 +197,7 @@ public final class MainActivity extends Activity {
             public void afterTextChanged(Editable e) { }
         });
         panel.addView(list, new LinearLayout.LayoutParams(-1, Ui.dp(this, 340)));
-        new AlertDialog.Builder(this).setTitle("Personal apps").setView(panel).setNegativeButton("Cancel", null)
+        new AlertDialog.Builder(this).setTitle(profile.kind.equals("work") ? "Work apps" : "Personal apps").setView(panel).setNegativeButton("Cancel", null)
             .setPositiveButton("Done", (d, w) -> { selected.clear(); selected.addAll(draft); done.run(); }).show();
     }
 }
