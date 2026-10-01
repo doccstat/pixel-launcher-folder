@@ -49,7 +49,10 @@ final class FolderRow extends HorizontalScrollView {
         addView(content, new HorizontalScrollView.LayoutParams(-2, -1));
     }
 
-    int expectedHeight() { return Ui.dp(getContext(), 76 + 16 * Math.max(1, getResources().getConfiguration().fontScale)); }
+    // Pixel Launcher uses roughly 52–66 dp app icons on this device. Keep the
+    // folder target at the upper end so it does not look smaller than a stock
+    // app cell when the user's icon-size setting is large.
+    int expectedHeight() { return Ui.dp(getContext(), 80 + 16 * Math.max(1, getResources().getConfiguration().fontScale)); }
 
     void bindProfile(String kind, long profileSerial) {
         if (!profile.equals(kind) || serial != profileSerial) {
@@ -138,14 +141,14 @@ final class FolderRow extends HorizontalScrollView {
                 if (i < folder.apps.size()) {
                     try { icon.setImageDrawable(entry(folder.apps.get(i)).icon(getContext())); } catch (RuntimeException ignored) { }
                 }
-                preview.addView(icon, new android.view.ViewGroup.LayoutParams(Ui.dp(getContext(), 19), Ui.dp(getContext(), 19)));
+                preview.addView(icon, new android.view.ViewGroup.LayoutParams(Ui.dp(getContext(), 22), Ui.dp(getContext(), 22)));
             }
-            card.addView(preview, new LinearLayout.LayoutParams(Ui.dp(getContext(), 54), Ui.dp(getContext(), 54)));
-            TextView label = Ui.text(getContext(), folder.name, 12); label.setMaxLines(1);
+            card.addView(preview, new LinearLayout.LayoutParams(Ui.dp(getContext(), 64), Ui.dp(getContext(), 64)));
+            TextView label = Ui.text(getContext(), folder.name, 14); label.setMaxLines(1);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
             card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
             card.setOnClickListener(v -> open(folder)); card.setOnLongClickListener(v -> { settings(); return true; });
-            content.addView(card, new LinearLayout.LayoutParams(Ui.dp(getContext(), 88), -1));
+            content.addView(card, new LinearLayout.LayoutParams(Ui.dp(getContext(), 96), -1));
         }
         content.addView(Ui.button(getContext(), folders.isEmpty() ? "+ Create folders" : "Edit", this::settings),
                 new LinearLayout.LayoutParams(-2, Ui.dp(getContext(), 52)));
