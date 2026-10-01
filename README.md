@@ -1,10 +1,11 @@
 # Pixel Launcher Folders
 
 `com.lixingchi.pixellauncherfolder` is a Vector/LSPosed module and settings
-app for Pixel Launcher. It adds a horizontally scrollable row of circular
-folder previews as the first item inside each app list, below the Personal/Work
-tabs. Folder data belongs to this package; the launcher database and existing
-APKs are never written.
+app for Pixel Launcher. It adds circular folder previews as consecutive normal
+grid cells at the beginning of each app list, below the Personal/Work tabs, so
+the next installed app follows immediately in the same first row. Folder data
+belongs to this package; the launcher database and existing APKs are never
+written.
 
 Folders are explicitly assigned to the Android Personal profile or a managed
 Work profile. Private Space and unknown profile types are excluded. App
@@ -20,7 +21,8 @@ enabled, folder apps remain in the alphabetical grid and search. When disabled,
 the folder apps are removed from that same profile's alphabetical grid while
 remaining searchable and available from the folder. Apps in another profile are
 never hidden by the setting. Each preview shows up to four app icons in a round
-background.
+background. The drawer has no Edit button; long-pressing a folder opens
+settings.
 
 Install the APK, then enable only `com.google.android.apps.nexuslauncher` in
 Vector and restart Pixel Launcher through the normal UI. The package has no

@@ -29,30 +29,38 @@ final class FolderRow extends HorizontalScrollView {
             new LinkedBlockingQueue<>(), task -> { Thread t = new Thread(task, "pixel-folders-read"); t.setDaemon(true); return t; });
     private final LinearLayout content;
     private final boolean live;
+    private final boolean single;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, AppEntry> apps = new HashMap<>();
     private boolean attached, registered, loading, reload;
     private String profile;
     private long serial;
     private int generation;
+    private int folderIndex = -1;
     private AlertDialog folderDialog;
     private final ContentObserver observer = new ContentObserver(main) {
         @Override public void onChange(boolean self) { refresh(); }
     };
 
     FolderRow(Context context, String profile, long serial, boolean live) {
-        super(context); this.live = live; this.profile = profile; this.serial = serial;
-        setHorizontalScrollBarEnabled(false); setFillViewport(false);
+        this(context, profile, serial, live, false);
+    }
+
+    FolderRow(Context context, String profile, long serial, boolean live, boolean single) {
+        super(context); this.live = live; this.single = single; this.profile = profile; this.serial = serial;
+        setHorizontalScrollBarEnabled(false); setFillViewport(single);
         setLayoutParams(new LinearLayout.LayoutParams(-1, expectedHeight()));
-        content = new LinearLayout(context); content.setGravity(Gravity.CENTER_VERTICAL);
-        content.setPadding(Ui.dp(context, 12), Ui.dp(context, 4), Ui.dp(context, 12), Ui.dp(context, 4));
-        addView(content, new HorizontalScrollView.LayoutParams(-2, -1));
+        content = new LinearLayout(context); content.setGravity(single ? Gravity.CENTER : Gravity.CENTER_VERTICAL);
+        content.setPadding(single ? 0 : Ui.dp(context, 12), Ui.dp(context, 4), single ? 0 : Ui.dp(context, 12), Ui.dp(context, 4));
+        addView(content, new HorizontalScrollView.LayoutParams(single ? -1 : -2, -1));
     }
 
     // Pixel Launcher uses roughly 52–66 dp app icons on this device. Keep the
     // folder target at the upper end so it does not look smaller than a stock
     // app cell when the user's icon-size setting is large.
-    int expectedHeight() { return Ui.dp(getContext(), 80 + 16 * Math.max(1, getResources().getConfiguration().fontScale)); }
+    int expectedHeight() { return Ui.dp(getContext(), 92 + 20 * Math.max(1, getResources().getConfiguration().fontScale)); }
+
+    void bindFolderIndex(int index) { folderIndex = index; refresh(); }
 
     void bindProfile(String kind, long profileSerial) {
         if (!profile.equals(kind) || serial != profileSerial) {
@@ -129,6 +137,10 @@ final class FolderRow extends HorizontalScrollView {
 
     private void render(List<Folders.Folder> folders) {
         content.removeAllViews();
+        if (single) {
+            Folders.Folder selected = folderIndex >= 0 && folderIndex < folders.size() ? folders.get(folderIndex) : null;
+            folders = selected == null ? java.util.Collections.emptyList() : java.util.Collections.singletonList(selected);
+        }
         for (Folders.Folder folder : folders) {
             LinearLayout card = Ui.column(getContext(), 6); card.setGravity(Gravity.CENTER);
             GridLayout preview = new GridLayout(getContext()); preview.setColumnCount(2); preview.setRowCount(2);
@@ -145,13 +157,14 @@ final class FolderRow extends HorizontalScrollView {
             }
             card.addView(preview, new LinearLayout.LayoutParams(Ui.dp(getContext(), 64), Ui.dp(getContext(), 64)));
             TextView label = Ui.text(getContext(), folder.name, 14); label.setMaxLines(1);
-            label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
+            label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
             card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
             card.setOnClickListener(v -> open(folder)); card.setOnLongClickListener(v -> { settings(); return true; });
-            content.addView(card, new LinearLayout.LayoutParams(Ui.dp(getContext(), 96), -1));
+            content.addView(card, new LinearLayout.LayoutParams(single ? -1 : Ui.dp(getContext(), 96), -1));
         }
-        content.addView(Ui.button(getContext(), folders.isEmpty() ? "+ Create folders" : "Edit", this::settings),
-                new LinearLayout.LayoutParams(-2, Ui.dp(getContext(), 52)));
+        if (!single && folders.isEmpty())
+            content.addView(Ui.button(getContext(), "+ Create folders", this::settings),
+                    new LinearLayout.LayoutParams(-2, Ui.dp(getContext(), 52)));
     }
 
     private void open(Folders.Folder folder) {

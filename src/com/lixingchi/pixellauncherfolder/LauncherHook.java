@@ -21,9 +21,9 @@ import java.util.List;
 import java.util.WeakHashMap;
 import java.util.function.Predicate;
 
-/** Adds a real adapter item BEFORE section/row calculation and DiffUtil notifications. */
+/** Adds folder adapter items BEFORE section/row calculation and DiffUtil notifications. */
 public final class LauncherHook implements IXposedHookLoadPackage {
-    static final int FOLDER_TYPE = 1 << 24; // Distinct from stock icon and Private Space types.
+    static final int FOLDER_TYPE = 1 << 24; // Base; each folder gets its own grid-cell type.
     private static final String ROOT = "com.android.launcher3.allapps.";
     private static final WeakHashMap<Object, WeakReference<Controller>> models = new WeakHashMap<>();
     private static Controller controller(Object model) {
@@ -75,9 +75,10 @@ public final class LauncherHook implements IXposedHookLoadPackage {
             Method create = method(base, "onCreateViewHolder", ViewGroup.class, int.class);
             hooks.add(XposedBridge.hookMethod(create, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if ((Integer) p.args[1] != FOLDER_TYPE) return;
+                    int type = (Integer) p.args[1];
+                    if (type < FOLDER_TYPE) return;
                     ViewGroup parent = (ViewGroup) p.args[0];
-                    FolderRow row = new FolderRow(parent.getContext(), "personal", -1, true);
+                    FolderRow row = new FolderRow(parent.getContext(), "personal", -1, true, true);
                     row.setLayoutParams(new ViewGroup.LayoutParams(-1, row.expectedHeight()));
                     Object result;
                     if (holderConstructor != null) result = holderConstructor.newInstance(row);
@@ -96,7 +97,15 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                     if (!(view instanceof FolderRow)) return;
                     p.setResult(null); // Never hand our row to the stock icon binder.
                     Controller controller = controller(get(p.thisObject, "mApps"));
-                    if (controller != null) ((FolderRow) view).bindProfile(controller.kind, controller.serial());
+                    if (controller != null) {
+                        int position = (Integer) p.args[1];
+                        List<?> items = (List<?>) get(get(p.thisObject, "mApps"), "mAdapterItems");
+                        if (position >= 0 && position < items.size()) {
+                            int type = (Integer) get(items.get(position), "viewType");
+                            ((FolderRow) view).bindProfile(controller.kind, controller.serial());
+                            ((FolderRow) view).bindFolderIndex(type - FOLDER_TYPE);
+                        }
+                    }
                 }
             }));
             hooks.add(XposedBridge.hookMethod(span, new XC_MethodHook() {
@@ -104,8 +113,9 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                     Object adapter = get(p.thisObject, "this$0");
                     List<?> items = (List<?>) get(get(adapter, "mApps"), "mAdapterItems");
                     int position = (Integer) p.args[0];
-                    if (position >= 0 && position < items.size() && (Integer) get(items.get(position), "viewType") == FOLDER_TYPE)
-                        p.setResult(get(get(adapter, "mGridLayoutMgr"), "mSpanCount"));
+                    if (position >= 0 && position < items.size()
+                            && (Integer) get(items.get(position), "viewType") >= FOLDER_TYPE)
+                        p.setResult(1); // A folder is one normal app-grid cell.
                 }
             }));
             hooks.add(XposedBridge.hookMethod(setup, new XC_MethodHook() {
@@ -145,14 +155,16 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                             if (!hidden) filtered.add(app);
                         }
                         // Prepare all reflection before touching the live adapter collection.
-                        Object folderItem = createItem.newInstance(FOLDER_TYPE);
                         List<?> sections = (List<?>) get(p.thisObject, "mFastScrollerSections");
                         List<Field> positions = new ArrayList<>();
                         for (Object section : sections) positions.add(field(section.getClass(), "position"));
                         @SuppressWarnings("unchecked") List<Object> items = (List<Object>) get(p.thisObject, "mAdapterItems");
-                        items.add(0, folderItem);
+                        for (int i = 0; i < folders.size(); i++)
+                            items.add(i, createItem.newInstance(FOLDER_TYPE + i));
                         for (int i = 0; i < sections.size(); i++) positions.get(i).setInt(sections.get(i), positions.get(i).getInt(sections.get(i)) + 1);
-                        p.args[0] = (Integer) p.args[0] + 1;
+                        for (int i = 0; i < sections.size(); i++)
+                            positions.get(i).setInt(sections.get(i), positions.get(i).getInt(sections.get(i)) + folders.size() - 1);
+                        p.args[0] = (Integer) p.args[0] + folders.size();
                         p.args[1] = filtered;
                     } catch (Exception error) { log(error); }
                 }
