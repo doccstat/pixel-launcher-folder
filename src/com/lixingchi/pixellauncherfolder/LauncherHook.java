@@ -30,6 +30,7 @@ public final class LauncherHook implements IXposedHookLoadPackage {
         WeakReference<Controller> value = models.get(model); return value == null ? null : value.get();
     }
     private static java.lang.reflect.Constructor<?> createItem;
+    private static java.lang.reflect.Constructor<?> holderConstructor;
     private static boolean ready;
 
     static Field field(Class<?> type, String name) throws NoSuchFieldException {
@@ -54,6 +55,9 @@ public final class LauncherHook implements IXposedHookLoadPackage {
             Class<?> base = Class.forName(ROOT + "BaseAllAppsAdapter", false, cl);
             Class<?> model = Class.forName(ROOT + "AlphabeticalAppsList", false, cl);
             Class<?> holder = Class.forName(ROOT + "ActivityAllAppsContainerView$AdapterHolder", false, cl);
+            Class<?> viewHolder = Class.forName(ROOT + "BaseAllAppsAdapter$ViewHolder", false, cl);
+            try { holderConstructor = viewHolder.getDeclaredConstructor(View.class); holderConstructor.setAccessible(true); }
+            catch (NoSuchMethodException missing) { holderConstructor = null; }
             Class<?> item = Class.forName(ROOT + "BaseAllAppsAdapter$AdapterItem", false, cl);
             createItem = item.getDeclaredConstructor(int.class); createItem.setAccessible(true);
             Method bind = null;
@@ -72,13 +76,18 @@ public final class LauncherHook implements IXposedHookLoadPackage {
             hooks.add(XposedBridge.hookMethod(create, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     if ((Integer) p.args[1] != FOLDER_TYPE) return;
-                    // The target APK erases ViewHolder's own constructor. Its
-                    // stock blank-row branch constructs the concrete holder.
-                    Object result = XposedBridge.invokeOriginalMethod(create, p.thisObject, new Object[]{p.args[0], 256});
                     ViewGroup parent = (ViewGroup) p.args[0];
                     FolderRow row = new FolderRow(parent.getContext(), "personal", -1, true);
                     row.setLayoutParams(new ViewGroup.LayoutParams(-1, row.expectedHeight()));
-                    set(result, "itemView", row); p.setResult(result);
+                    Object result;
+                    if (holderConstructor != null) result = holderConstructor.newInstance(row);
+                    else {
+                        // The target APK may erase the constructor. Its stock
+                        // blank-row branch still supplies the concrete holder.
+                        result = XposedBridge.invokeOriginalMethod(create, p.thisObject, new Object[]{p.args[0], 256});
+                        set(result, "itemView", row);
+                    }
+                    p.setResult(result);
                 }
             }));
             hooks.add(XposedBridge.hookMethod(bind, new XC_MethodHook() {
