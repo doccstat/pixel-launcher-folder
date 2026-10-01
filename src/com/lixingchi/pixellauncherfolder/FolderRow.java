@@ -30,6 +30,7 @@ final class FolderRow extends HorizontalScrollView {
     private final LinearLayout content;
     private final boolean live;
     private final boolean single;
+    private final int topInset;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, AppEntry> apps = new HashMap<>();
     private boolean attached, registered, loading, reload;
@@ -48,17 +49,24 @@ final class FolderRow extends HorizontalScrollView {
 
     FolderRow(Context context, String profile, long serial, boolean live, boolean single) {
         super(context); this.live = live; this.single = single; this.profile = profile; this.serial = serial;
+        topInset = single && context.getResources().getDisplayMetrics().widthPixels < 1500
+                ? Ui.dp(context, 40) : 0;
         setHorizontalScrollBarEnabled(false); setFillViewport(single);
         setLayoutParams(new LinearLayout.LayoutParams(-1, expectedHeight()));
-        content = new LinearLayout(context); content.setGravity(single ? Gravity.CENTER : Gravity.CENTER_VERTICAL);
-        content.setPadding(single ? 0 : Ui.dp(context, 12), Ui.dp(context, 4), single ? 0 : Ui.dp(context, 12), Ui.dp(context, 4));
+        content = new LinearLayout(context); content.setGravity(single
+                ? (topInset == 0 ? Gravity.CENTER : Gravity.CENTER_HORIZONTAL | Gravity.TOP)
+                : Gravity.CENTER_VERTICAL);
+        content.setPadding(single ? 0 : Ui.dp(context, 12), topInset == 0 ? Ui.dp(context, 4) : topInset,
+                single ? 0 : Ui.dp(context, 12), Ui.dp(context, 4));
         addView(content, new HorizontalScrollView.LayoutParams(single ? -1 : -2, -1));
     }
 
     // Pixel Launcher uses roughly 52–66 dp app icons on this device. Keep the
     // folder target at the upper end so it does not look smaller than a stock
     // app cell when the user's icon-size setting is large.
-    int expectedHeight() { return Ui.dp(getContext(), 92 + 20 * Math.max(1, getResources().getConfiguration().fontScale)); }
+    int expectedHeight() {
+        return Ui.dp(getContext(), 92 + 20 * Math.max(1, getResources().getConfiguration().fontScale)) + topInset;
+    }
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
         int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
