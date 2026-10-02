@@ -41,13 +41,15 @@ python build.py
 `build.py` uses API 37 and build-tools 36.0.0, performs a sequential direct SDK
 build without a Gradle daemon, and writes `dist/PixelLauncherFolders.apk`.
 The optional `python build.py --test` build adds an instrumentation runner. The
-current build passed **41 checks** on the Pixel 11 Pro Fold, including Personal
+current build passed **55 checks** on the Pixel 11 Pro Fold, including Personal
 and Work profile discovery, cross-profile picker isolation, profile-serial
 matching, folder-only filtering, toggle persistence, circular preview drawing,
-and four-icon preview slots. These tests run in our package; live Vector hook
-installation, drawer placement/scrolling and search still need verification
-after the user reloads Pixel Launcher. There is no claim of end-to-end launcher
-validation.
+four-icon preview slots, and complete folder-cell sizing on the outer and unfolded
+grid spans. The live outer-display screenshot
+`Screenshot_20261001-182039.png` verified a complete circular Finance cell,
+its full label, and Android Faker immediately following it in the first row
+after the launcher was reloaded through Vector. Search and scrolling remain
+covered by the launcher’s normal behavior rather than package instrumentation.
 
 For the connected devices used during validation, `67021FDDJ00280` is the Pixel
 11 Pro Fold. The Galaxy Watch entries (`10.0.0.211:37053` and the `adb-RFA...`
