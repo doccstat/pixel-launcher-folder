@@ -71,9 +71,10 @@ final class FolderRow extends FrameLayout {
     }
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
-        int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
-                ? Ui.dp(getContext(), 80) : MeasureSpec.getSize(widthSpec);
-        super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+        // Let GridLayoutManager constrain the width to one app cell. Forcing
+        // the width to the incoming parent spec makes the first cell overflow
+        // and clip at the left edge on the outer display.
+        super.onMeasure(widthSpec,
                 MeasureSpec.makeMeasureSpec(expectedHeight(), MeasureSpec.EXACTLY));
     }
 
