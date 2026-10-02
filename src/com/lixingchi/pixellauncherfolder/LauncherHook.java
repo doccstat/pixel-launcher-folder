@@ -70,6 +70,10 @@ public final class LauncherHook implements IXposedHookLoadPackage {
             // Resolve fields before any hook becomes active. Unsupported builds fail closed.
             for (String name : new String[]{"mAdapterItems", "mApps", "mSearchResults", "mFastScrollerSections"}) field(model, name);
             field(base, "mApps"); field(item, "viewType"); field(bind.getParameterTypes()[0], "itemView");
+            field(base, "mAppsPerRow");
+            Class<?> gridAdapter = Class.forName(ROOT + "AllAppsGridAdapter", false, cl);
+            Field layoutManager = field(gridAdapter, "mGridLayoutMgr");
+            field(layoutManager.getType(), "mSpanCount");
             field(holder, "mAppsList"); field(holder, "mType");
 
             Method create = method(base, "onCreateViewHolder", ViewGroup.class, int.class);
@@ -114,8 +118,14 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                     List<?> items = (List<?>) get(get(adapter, "mApps"), "mAdapterItems");
                     int position = (Integer) p.args[0];
                     if (position >= 0 && position < items.size()
-                            && (Integer) get(items.get(position), "viewType") >= FOLDER_TYPE)
-                        p.setResult(1); // A folder is one normal app-grid cell.
+                            && (Integer) get(items.get(position), "viewType") >= FOLDER_TYPE) {
+                        // Match GridSpanSizer's stock icon branch. Search
+                        // providers can multiply the internal span count, so
+                        // one app is not necessarily one span. This also works
+                        // when folder-only mode leaves no normal app items.
+                        p.setResult(GridSizing.appSpan((Integer) get(get(adapter, "mGridLayoutMgr"), "mSpanCount"),
+                                (Integer) get(adapter, "mAppsPerRow")));
+                    }
                 }
             }));
             hooks.add(XposedBridge.hookMethod(setup, new XC_MethodHook() {

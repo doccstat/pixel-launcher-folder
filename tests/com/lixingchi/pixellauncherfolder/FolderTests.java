@@ -38,6 +38,9 @@ public final class FolderTests extends Instrumentation {
         Activity activity = null;
         Bundle result = new Bundle(); int code = Activity.RESULT_OK;
         try {
+            check(GridSizing.appSpan(12, 4) == 3, "Outer drawer app occupies three internal spans");
+            check(GridSizing.appSpan(12, 6) == 2, "Unfolded drawer app occupies two internal spans");
+            check(GridSizing.appSpan(4, 4) == 1, "Unmultiplied app grid remains one span");
             check(Folders.parse("{\"version\":1,\"folders\":[]}").isEmpty(), "Empty config");
             reject("{\"version\":2,\"folders\":[]}"); reject("{}"); reject("not-json");
             List<Folders.Folder> list = new ArrayList<>();
@@ -131,6 +134,37 @@ public final class FolderTests extends Instrumentation {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
                 } catch (java.io.IOException error) { throw new AssertionError(error); }
                 bitmap.recycle();
+            });
+            runOnMainSync(() -> {
+                preview[0] = new FolderRow(screen, "personal", Profiles.personalSerial(context), false, true);
+                preview[0].bindFolderIndex(0);
+                screen.setContentView(preview[0]);
+            });
+            waitForIdleSync();
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS);
+            waitForIdleSync();
+            runOnMainSync(() -> {
+                TextView label = (TextView) find(preview[0], "Test");
+                check(label != null, "Single drawer cell loaded");
+                label.setText("Finance");
+                ViewGroup card = (ViewGroup) label.getParent();
+                View icons = card.getChildAt(0);
+                // Reproduce a multiplied grid on both display column counts.
+                // The former one-span bug yields 85 px and clips the circle.
+                for (int columns : new int[]{4, 6}) {
+                    int availableWidth = columns == 4 ? 1020 : 1968;
+                    int width = availableWidth * GridSizing.appSpan(12, columns) / 12;
+                    int height = preview[0].expectedHeight();
+                    preview[0].measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+                    preview[0].layout(0, 0, width, height);
+                    check(icons.getWidth() == icons.getHeight(), "Drawer preview stays round at " + columns + " columns");
+                    check(icons.getLeft() >= 0 && icons.getRight() <= card.getWidth(), "Complete circle inside drawer cell");
+                    check(label.getLayout().getLineCount() == 1 && label.getLayout().getEllipsisCount(0) == 0,
+                            "Finance label fits without clipping or wrapping");
+                    check(label.getBottom() <= card.getHeight(), "Complete label inside drawer cell");
+                    check(width * columns == availableWidth, "Folder and following apps fill one row");
+                }
             });
             result.putString("stream", "PASS: " + checks + " checks; editor and preview opened; original preferences restored.\n");
         } catch (Throwable error) {
