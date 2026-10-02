@@ -31,6 +31,9 @@ final class FolderRow extends FrameLayout {
     private final boolean live;
     private final boolean single;
     private final int topInset;
+    private final int stockIconSize;
+    private final float stockTextSize;
+    private final int stockDrawablePadding;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, AppEntry> apps = new HashMap<>();
     private boolean attached, registered, loading, reload;
@@ -48,9 +51,18 @@ final class FolderRow extends FrameLayout {
     }
 
     FolderRow(Context context, String profile, long serial, boolean live, boolean single) {
+        this(context, profile, serial, live, single, 0, 0f, 0);
+    }
+
+    FolderRow(Context context, String profile, long serial, boolean live, boolean single,
+            int stockIconSize, float stockTextSize, int stockDrawablePadding) {
         super(context); this.live = live; this.single = single; this.profile = profile; this.serial = serial;
-        topInset = single && context.getResources().getDisplayMetrics().widthPixels < 1500
-                ? Ui.dp(context, 40) : 0;
+        this.stockIconSize = stockIconSize; this.stockTextSize = stockTextSize;
+        this.stockDrawablePadding = stockDrawablePadding;
+        // The folder is now measured with the launcher app-cell span. It needs
+        // no display-specific vertical compensation and must share the stock
+        // icon baseline on both screens.
+        topInset = 0;
         setClipChildren(false); setClipToPadding(false);
         setLayoutParams(new LinearLayout.LayoutParams(-1, expectedHeight()));
         content = new LinearLayout(context); content.setGravity(single
@@ -161,8 +173,11 @@ final class FolderRow extends FrameLayout {
         }
         for (Folders.Folder folder : folders) {
             LinearLayout card = Ui.column(getContext(), single ? 0 : 6); card.setGravity(Gravity.CENTER);
+            int previewSize = single && stockIconSize > 0 ? stockIconSize : Ui.dp(getContext(), single ? 60 : 64);
+            int miniSize = Ui.dp(getContext(), single ? 20 : 22);
+            int previewPadding = Ui.dp(getContext(), single ? 7 : 8);
             GridLayout preview = new GridLayout(getContext()); preview.setColumnCount(2); preview.setRowCount(2);
-            preview.setPadding(Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), Ui.dp(getContext(), 8), Ui.dp(getContext(), 8));
+            preview.setPadding(previewPadding, previewPadding, previewPadding, previewPadding);
             android.graphics.drawable.GradientDrawable circle = new android.graphics.drawable.GradientDrawable();
             circle.setShape(android.graphics.drawable.GradientDrawable.OVAL); circle.setColor(Ui.surface(getContext()));
             preview.setBackground(circle); preview.setClipToOutline(true);
@@ -171,11 +186,15 @@ final class FolderRow extends FrameLayout {
                 if (i < folder.apps.size()) {
                     try { icon.setImageDrawable(entry(folder.apps.get(i)).icon(getContext())); } catch (RuntimeException ignored) { }
                 }
-                preview.addView(icon, new android.view.ViewGroup.LayoutParams(Ui.dp(getContext(), 22), Ui.dp(getContext(), 22)));
+                preview.addView(icon, new android.view.ViewGroup.LayoutParams(miniSize, miniSize));
             }
-            card.addView(preview, new LinearLayout.LayoutParams(Ui.dp(getContext(), 64), Ui.dp(getContext(), 64)));
+            card.addView(preview, new LinearLayout.LayoutParams(previewSize, previewSize));
             TextView label = Ui.text(getContext(), folder.name, 14); label.setMaxLines(1);
+            if (single && stockTextSize > 0) label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, stockTextSize);
             label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
+            // BubbleTextView's own drawable-to-label gap preserves the stock
+            // baseline without a display-specific magic offset.
+            if (single && stockDrawablePadding > 0) label.setTranslationY(stockDrawablePadding);
             card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
             card.setOnClickListener(v -> open(folder)); card.setOnLongClickListener(v -> { settings(); return true; });
             content.addView(card, new LinearLayout.LayoutParams(single ? -1 : Ui.dp(getContext(), 96), -1));

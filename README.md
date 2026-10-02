@@ -45,8 +45,9 @@ current build passed **55 checks** on the Pixel 11 Pro Fold, including Personal
 and Work profile discovery, cross-profile picker isolation, profile-serial
 matching, folder-only filtering, toggle persistence, circular preview drawing,
 four-icon preview slots, and complete folder-cell sizing on the outer and unfolded
-grid spans. The live outer-display screenshot
-`Screenshot_20261001-182039.png` verified a complete circular Finance cell,
+grid spans. The hook reads the stock `BubbleTextView` icon size, text size, and
+drawable gap at runtime. The live outer-display screenshot
+`Screenshot_20261001-182814.png` verified a complete circular Finance cell,
 its full label, and Android Faker immediately following it in the first row
 after the launcher was reloaded through Vector. Search and scrolling remain
 covered by the launcher’s normal behavior rather than package instrumentation.

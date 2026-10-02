@@ -82,7 +82,19 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                     int type = (Integer) p.args[1];
                     if (type < FOLDER_TYPE) return;
                     ViewGroup parent = (ViewGroup) p.args[0];
-                    FolderRow row = new FolderRow(parent.getContext(), "personal", -1, true, true);
+                    int stockIconSize = 0; float stockTextSize = 0f; int stockDrawablePadding = 0;
+                    try {
+                        Object stockHolder = XposedBridge.invokeOriginalMethod(create, p.thisObject,
+                                new Object[]{parent, 2});
+                        View stock = (View) get(stockHolder, "itemView");
+                        stockIconSize = field(stock.getClass(), "mIconSize").getInt(stock);
+                        if (stock instanceof android.widget.TextView) {
+                            android.widget.TextView text = (android.widget.TextView) stock;
+                            stockTextSize = text.getTextSize(); stockDrawablePadding = text.getCompoundDrawablePadding();
+                        }
+                    } catch (Throwable error) { log(error); }
+                    FolderRow row = new FolderRow(parent.getContext(), "personal", -1, true, true,
+                            stockIconSize, stockTextSize, stockDrawablePadding);
                     row.setLayoutParams(new ViewGroup.LayoutParams(-1, row.expectedHeight()));
                     Object result;
                     if (holderConstructor != null) result = holderConstructor.newInstance(row);
