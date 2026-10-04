@@ -17,6 +17,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.text.Collator;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -172,6 +174,19 @@ final class FolderRow extends FrameLayout {
     }
     private AppEntry entry(String key) { AppEntry e = apps.get(key); return e == null ? new AppEntry(key) : e; }
 
+    static List<String> sortedApps(Folders.Folder folder, Map<String, AppEntry> apps) {
+        List<String> result = new ArrayList<>(folder.apps);
+        Collator collator = Collator.getInstance();
+        result.sort((a, b) -> {
+            AppEntry left = apps.get(a), right = apps.get(b);
+            String leftLabel = left == null ? new AppEntry(a).label : left.label;
+            String rightLabel = right == null ? new AppEntry(b).label : right.label;
+            int c = collator.compare(leftLabel, rightLabel);
+            return c == 0 ? a.compareTo(b) : c;
+        });
+        return result;
+    }
+
     private void render(List<Folders.Folder> folders) {
         content.removeAllViews();
         if (single) {
@@ -189,10 +204,11 @@ final class FolderRow extends FrameLayout {
             android.graphics.drawable.GradientDrawable circle = new android.graphics.drawable.GradientDrawable();
             circle.setShape(android.graphics.drawable.GradientDrawable.OVAL); circle.setColor(Ui.surface(getContext()));
             preview.setBackground(circle); preview.setClipToOutline(true);
+            List<String> appKeys = sortedApps(folder, apps);
             for (int i = 0; i < 4; i++) {
                 ImageView icon = new ImageView(getContext());
-                if (i < folder.apps.size()) {
-                    try { icon.setImageDrawable(entry(folder.apps.get(i)).icon(getContext())); } catch (RuntimeException ignored) { }
+                if (i < appKeys.size()) {
+                    try { icon.setImageDrawable(entry(appKeys.get(i)).icon(getContext())); } catch (RuntimeException ignored) { }
                 }
                 icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 FrameLayout slot = new FrameLayout(getContext());
@@ -225,7 +241,7 @@ final class FolderRow extends FrameLayout {
         if (folderDialog != null) folderDialog.dismiss();
         ScrollView scroll = new ScrollView(getContext());
         LinearLayout list = Ui.column(getContext(), 12); scroll.addView(list);
-        for (String key : folder.apps) {
+        for (String key : sortedApps(folder, apps)) {
             AppEntry e = entry(key);
             android.widget.Button item = Ui.button(getContext(), e.label, () -> {
                 try { AppEntry.launch(getContext(), key, folder.profile, folder.serial); if (folderDialog != null) folderDialog.dismiss(); }
