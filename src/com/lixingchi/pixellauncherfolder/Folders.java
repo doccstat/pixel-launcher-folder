@@ -116,6 +116,15 @@ final class Folders {
         return false;
     }
 
+    static boolean assignedElsewhere(List<Folder> folders, Folder current, String kind, long serial,
+            long personalSerial, String component) {
+        for (Folder folder : folders) {
+            if (current != null && current.id.equals(folder.id)) continue;
+            if (matches(folder, kind, serial, personalSerial) && folder.apps.contains(component)) return true;
+        }
+        return false;
+    }
+
     static boolean shouldHide(boolean keep, List<Folder> folders, String kind, long serial,
             long personalSerial, String component) {
         if (keep) return false;

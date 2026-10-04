@@ -7,6 +7,7 @@ import android.database.ContentObserver;
 import android.database.Cursor;
 import android.os.Handler;
 import android.os.Looper;
+import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.GridLayout;
@@ -34,6 +35,7 @@ final class FolderRow extends FrameLayout {
     private final int stockIconSize;
     private final float stockTextSize;
     private final int stockDrawablePadding;
+    private final Typeface stockTypeface;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, AppEntry> apps = new HashMap<>();
     private boolean attached, registered, loading, reload;
@@ -51,14 +53,19 @@ final class FolderRow extends FrameLayout {
     }
 
     FolderRow(Context context, String profile, long serial, boolean live, boolean single) {
-        this(context, profile, serial, live, single, 0, 0f, 0);
+        this(context, profile, serial, live, single, 0, 0f, 0, null);
     }
 
     FolderRow(Context context, String profile, long serial, boolean live, boolean single,
             int stockIconSize, float stockTextSize, int stockDrawablePadding) {
+        this(context, profile, serial, live, single, stockIconSize, stockTextSize, stockDrawablePadding, null);
+    }
+
+    FolderRow(Context context, String profile, long serial, boolean live, boolean single,
+            int stockIconSize, float stockTextSize, int stockDrawablePadding, Typeface stockTypeface) {
         super(context); this.live = live; this.single = single; this.profile = profile; this.serial = serial;
         this.stockIconSize = stockIconSize; this.stockTextSize = stockTextSize;
-        this.stockDrawablePadding = stockDrawablePadding;
+        this.stockDrawablePadding = stockDrawablePadding; this.stockTypeface = stockTypeface;
         // The folder is now measured with the launcher app-cell span. It needs
         // no display-specific vertical compensation and must share the stock
         // icon baseline on both screens.
@@ -174,7 +181,8 @@ final class FolderRow extends FrameLayout {
         for (Folders.Folder folder : folders) {
             LinearLayout card = Ui.column(getContext(), single ? 0 : 6); card.setGravity(Gravity.CENTER);
             int previewSize = single && stockIconSize > 0 ? stockIconSize : Ui.dp(getContext(), single ? 60 : 64);
-            int miniSize = Ui.dp(getContext(), single ? 20 : 22);
+            int miniSize = Math.min(Ui.dp(getContext(), single ? 20 : 22),
+                    (previewSize - 2 * Ui.dp(getContext(), single ? 7 : 8)) / 2);
             int previewPadding = Ui.dp(getContext(), single ? 7 : 8);
             GridLayout preview = new GridLayout(getContext()); preview.setColumnCount(2); preview.setRowCount(2);
             preview.setPadding(previewPadding, previewPadding, previewPadding, previewPadding);
@@ -186,11 +194,19 @@ final class FolderRow extends FrameLayout {
                 if (i < folder.apps.size()) {
                     try { icon.setImageDrawable(entry(folder.apps.get(i)).icon(getContext())); } catch (RuntimeException ignored) { }
                 }
-                preview.addView(icon, new android.view.ViewGroup.LayoutParams(miniSize, miniSize));
+                icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                FrameLayout slot = new FrameLayout(getContext());
+                slot.addView(icon, new FrameLayout.LayoutParams(miniSize, miniSize, Gravity.CENTER));
+                GridLayout.LayoutParams slotParams = new GridLayout.LayoutParams(
+                        GridLayout.spec(i / 2, 1, GridLayout.FILL, 1f),
+                        GridLayout.spec(i % 2, 1, GridLayout.FILL, 1f));
+                slotParams.width = 0; slotParams.height = 0;
+                preview.addView(slot, slotParams);
             }
             card.addView(preview, new LinearLayout.LayoutParams(previewSize, previewSize));
             TextView label = Ui.text(getContext(), folder.name, 14); label.setMaxLines(1);
             if (single && stockTextSize > 0) label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, stockTextSize);
+            if (single && stockTypeface != null) label.setTypeface(stockTypeface);
             label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
             // BubbleTextView's own drawable-to-label gap preserves the stock
             // baseline without a display-specific magic offset.

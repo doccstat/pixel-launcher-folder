@@ -2,6 +2,8 @@ package com.lixingchi.pixellauncherfolder;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -121,7 +123,8 @@ public final class MainActivity extends Activity {
         if (original != null) selected.addAll(original.apps);
         android.widget.Button choose = new android.widget.Button(this);
         choose.setAllCaps(false); choose.setText("Choose apps · " + selected.size());
-        choose.setOnClickListener(v -> pickApps(selected, (Profiles) profilePicker.getSelectedItem(), () -> choose.setText("Choose apps · " + selected.size())));
+        choose.setOnClickListener(v -> pickApps(selected, (Profiles) profilePicker.getSelectedItem(), original,
+                () -> choose.setText("Choose apps · " + selected.size())));
         profilePicker.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             private int previous = profilePicker.getSelectedItemPosition();
             public void onNothingSelected(android.widget.AdapterView<?> parent) { }
@@ -155,7 +158,20 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
-    private void pickApps(Set<String> selected, Profiles profile, Runnable done) {
+    static void membershipIndicator(CheckedTextView text, boolean selected, boolean elsewhere) {
+        // Remember the themed tint before recycling a gray row into a selected
+        // row. Clearing the tint is not equivalent to restoring the theme.
+        if (!(text.getTag() instanceof ColorStateList[]))
+            text.setTag(new ColorStateList[]{text.getCheckMarkTintList()});
+        ColorStateList normal = ((ColorStateList[]) text.getTag())[0];
+        text.setChecked(selected || elsewhere);
+        text.setCheckMarkTintList(!selected && elsewhere
+                ? ColorStateList.valueOf(Color.rgb(125, 128, 138)) : normal);
+        text.setStateDescription(selected ? "Selected in this folder"
+                : elsewhere ? "In another folder; tap to add here" : "Not selected");
+    }
+
+    private void pickApps(Set<String> selected, Profiles profile, Folders.Folder current, Runnable done) {
         final List<AppEntry> all;
         try { all = AppEntry.list(this, profile.kind, profile.serial); } catch (RuntimeException e) { message(e.getMessage()); return; }
         HashSet<String> available = new HashSet<>();
@@ -174,8 +190,14 @@ public final class MainActivity extends Activity {
                 CheckedTextView text = recycled instanceof CheckedTextView ? (CheckedTextView) recycled
                         : (CheckedTextView) getLayoutInflater().inflate(android.R.layout.simple_list_item_multiple_choice, parent, false);
                 AppEntry entry = visible.get(pos);
+                boolean checked = draft.contains(entry.key);
+                boolean elsewhere = Folders.assignedElsewhere(folders, current, profile.kind, profile.serial,
+                        Profiles.personalSerial(MainActivity.this), entry.key);
                 text.setText(entry.label + "\n" + entry.key); text.setTextSize(14);
-                text.setChecked(draft.contains(entry.key)); return text;
+                // Keep an existing assignment visible, but distinguish it from
+                // this folder's normal selection. It remains fully clickable.
+                membershipIndicator(text, checked, elsewhere);
+                return text;
             }
         };
         list.setAdapter(adapter);

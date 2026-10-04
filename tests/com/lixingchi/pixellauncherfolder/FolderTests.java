@@ -24,6 +24,8 @@ public final class FolderTests extends Instrumentation {
         try { Folders.parse(json); throw new AssertionError("Accepted malformed folders"); }
         catch (org.json.JSONException expected) { checks++; }
     }
+    private long ownerSerial(Context context) { return Profiles.personalSerial(context); }
+
     private View find(View view, String label) {
         if (view instanceof TextView && label.contentEquals(((TextView) view).getText())) return view;
         if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
@@ -49,6 +51,12 @@ public final class FolderTests extends Instrumentation {
             check(normalized.get(0).name.equals("Test"), "Names trimmed");
             check(normalized.get(0).apps.size() == 1, "Duplicate components removed");
             check(normalized.get(0).apps.get(0).equals(Folders.PACKAGE + "/" + Folders.PACKAGE + ".MainActivity"), "Components normalized");
+            Folders.Folder other = Folders.Folder.create("Other", Arrays.asList(normalized.get(0).apps.get(0)));
+            List<Folders.Folder> memberships = Arrays.asList(normalized.get(0), other);
+            check(Folders.assignedElsewhere(memberships, normalized.get(0), "personal", ownerSerial(context),
+                    ownerSerial(context), normalized.get(0).apps.get(0)), "Other-folder membership is visible");
+            check(!Folders.assignedElsewhere(memberships, other, "personal", ownerSerial(context),
+                    ownerSerial(context), normalized.get(0).apps.get(0)), "Current-folder membership is not marked elsewhere");
             String duplicate = "{\"version\":1,\"folders\":[{\"id\":\"same\",\"name\":\"A\",\"apps\":[]},{\"id\":\"same\",\"name\":\"B\",\"apps\":[]}]";
             reject(duplicate);
             reject("{\"version\":1,\"folders\":[{\"id\":\"a\",\"name\":\"   \",\"apps\":[]}]}");
