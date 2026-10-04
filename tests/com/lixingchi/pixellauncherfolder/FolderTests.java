@@ -55,7 +55,9 @@ public final class FolderTests extends Instrumentation {
             List<Folders.Folder> memberships = Arrays.asList(normalized.get(0), other);
             check(Folders.assignedElsewhere(memberships, normalized.get(0), "personal", ownerSerial(context),
                     ownerSerial(context), normalized.get(0).apps.get(0)), "Other-folder membership is visible");
-            check(!Folders.assignedElsewhere(memberships, other, "personal", ownerSerial(context),
+            check(Folders.assignedElsewhere(memberships, other, "personal", ownerSerial(context),
+                    ownerSerial(context), normalized.get(0).apps.get(0)), "Membership in a different folder remains visible");
+            check(!Folders.assignedElsewhere(Arrays.asList(other), other, "personal", ownerSerial(context),
                     ownerSerial(context), normalized.get(0).apps.get(0)), "Current-folder membership is not marked elsewhere");
             String duplicate = "{\"version\":1,\"folders\":[{\"id\":\"same\",\"name\":\"A\",\"apps\":[]},{\"id\":\"same\",\"name\":\"B\",\"apps\":[]}]";
             reject(duplicate);
@@ -94,6 +96,16 @@ public final class FolderTests extends Instrumentation {
             check(!Folders.shouldHide(false, isolated, "work", 101, owner, component), "Removed/recreated profile serial never matches");
             check(!Folders.shouldHide(false, isolated, "work", 100, owner, "other/.Activity"), "Unassigned apps preserved");
             check(Folders.parse(Folders.encode(isolated)).get(0).serial == 100, "Work serial round trip");
+            android.widget.CheckedTextView indicator = new android.widget.CheckedTextView(context);
+            MainActivity.membershipIndicator(context, indicator, true, false);
+            check(indicator.isChecked() && indicator.getCheckMarkTintList().getDefaultColor() == Ui.pickerActive(context),
+                    "Current-folder apps use the active blue checkmark");
+            MainActivity.membershipIndicator(context, indicator, false, true);
+            check(indicator.isChecked() && indicator.getCheckMarkTintList().getDefaultColor() == Ui.pickerElsewhere(context),
+                    "Other-folder apps use the inactive gray checkmark");
+            MainActivity.membershipIndicator(context, indicator, false, false);
+            check(!indicator.isChecked() && indicator.getCheckMarkTintList().getDefaultColor() == Ui.pickerElsewhere(context),
+                    "Unassigned apps have no active checkmark");
             reject("{\"version\":1,\"folders\":[{\"id\":\"a\",\"name\":\"A\",\"profile\":\"private\",\"serial\":11,\"apps\":[]}]}");
             reject("{\"version\":1,\"keepInDrawer\":\"false\",\"folders\":[]}");
             List<Profiles> profiles = Profiles.available(context);

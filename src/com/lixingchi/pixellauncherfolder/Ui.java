@@ -13,6 +13,14 @@ final class Ui {
     static boolean dark(Context c) { return (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES; }
     static int text(Context c) { return dark(c) ? Color.rgb(230, 233, 240) : Color.rgb(27, 29, 35); }
     static int surface(Context c) { return dark(c) ? Color.rgb(43, 48, 59) : Color.rgb(224, 233, 249); }
+    // Match Pixel's dynamic blue selection family rather than the legacy
+    // black accent supplied by Theme.Material.NoActionBar.
+    static int pickerActive(Context c) {
+        return dark(c) ? Color.rgb(190, 198, 255) : Color.rgb(70, 88, 150);
+    }
+    static int pickerElsewhere(Context c) {
+        return dark(c) ? Color.rgb(145, 149, 160) : Color.rgb(125, 128, 138);
+    }
     static GradientDrawable rounded(Context c) {
         GradientDrawable d = new GradientDrawable(); d.setColor(surface(c)); d.setCornerRadius(dp(c, 18)); return d;
     }
