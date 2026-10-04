@@ -2,8 +2,8 @@ package com.lixingchi.pixellauncherfolder;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.res.ColorStateList;
-import android.graphics.Color;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -158,15 +158,10 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
-    static void membershipIndicator(CheckedTextView text, boolean selected, boolean elsewhere) {
-        // Remember the themed tint before recycling a gray row into a selected
-        // row. Clearing the tint is not equivalent to restoring the theme.
-        if (!(text.getTag() instanceof ColorStateList[]))
-            text.setTag(new ColorStateList[]{text.getCheckMarkTintList()});
-        ColorStateList normal = ((ColorStateList[]) text.getTag())[0];
+    static void membershipIndicator(Context context, CheckedTextView text, boolean selected, boolean elsewhere) {
         text.setChecked(selected || elsewhere);
-        text.setCheckMarkTintList(!selected && elsewhere
-                ? ColorStateList.valueOf(Color.rgb(125, 128, 138)) : normal);
+        text.setCheckMarkTintList(ColorStateList.valueOf(selected
+                ? Ui.pickerActive(context) : Ui.pickerElsewhere(context)));
         text.setStateDescription(selected ? "Selected in this folder"
                 : elsewhere ? "In another folder; tap to add here" : "Not selected");
     }
@@ -196,7 +191,7 @@ public final class MainActivity extends Activity {
                 text.setText(entry.label + "\n" + entry.key); text.setTextSize(14);
                 // Keep an existing assignment visible, but distinguish it from
                 // this folder's normal selection. It remains fully clickable.
-                membershipIndicator(text, checked, elsewhere);
+                membershipIndicator(MainActivity.this, text, checked, elsewhere);
                 return text;
             }
         };

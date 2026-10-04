@@ -210,7 +210,8 @@ final class FolderRow extends FrameLayout {
             label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
             // BubbleTextView's own drawable-to-label gap preserves the stock
             // baseline without a display-specific magic offset.
-            if (single && stockDrawablePadding > 0) label.setTranslationY(stockDrawablePadding);
+            if (single && stockDrawablePadding > 0)
+                label.setTranslationY(Math.max(0, stockDrawablePadding - Ui.dp(getContext(), 2)));
             card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
             card.setOnClickListener(v -> open(folder)); card.setOnLongClickListener(v -> { settings(); return true; });
             content.addView(card, new LinearLayout.LayoutParams(single ? -1 : Ui.dp(getContext(), 96), -1));
