@@ -169,7 +169,12 @@ final class Folders {
     private static Uri writableFile(Context context, Uri tree, Map<String, Uri> current, String name) throws Exception {
         Uri existing = current.get(name);
         return existing != null ? existing : DocumentsContract.createDocument(context.getContentResolver(), treeDocument(tree),
-                "text/plain", name);
+                name.endsWith(".json") ? "application/json" : "text/plain", name);
+    }
+
+    private static boolean legacyManifest(String name) {
+        return name.equals(".pixel-launcher-folders.json.txt")
+                || (name.startsWith(".pixel-launcher-folders.json (") && name.endsWith(").txt"));
     }
 
     private static String safeName(String name, Set<String> used) {
@@ -185,6 +190,12 @@ final class Folders {
         Uri tree = backupTree(context);
         if (tree == null) throw new IllegalStateException("Choose a backup folder first");
         Map<String, Uri> current = children(context, tree); Set<String> used = new HashSet<>();
+        for (Map.Entry<String, Uri> entry : new ArrayList<>(current.entrySet())) {
+            if (legacyManifest(entry.getKey())) {
+                DocumentsContract.deleteDocument(context.getContentResolver(), entry.getValue());
+                current.remove(entry.getKey());
+            }
+        }
         Set<String> desired = new HashSet<>(); JSONArray manifestFolders = new JSONArray();
         for (Folder folder : folders) {
             String file = safeName(folder.name, used); desired.add(file);
@@ -274,7 +285,8 @@ final class Folders {
             }
         } else {
             for (Map.Entry<String, Uri> entry : files.entrySet()) {
-                if (!entry.getKey().toLowerCase(java.util.Locale.ROOT).endsWith(".txt")) continue;
+                if (!entry.getKey().toLowerCase(java.util.Locale.ROOT).endsWith(".txt")
+                        || legacyManifest(entry.getKey())) continue;
                 String name = entry.getKey().substring(0, entry.getKey().length() - 4);
                 result.add(Folder.create(name, "personal", -1, resolveApps(context, "personal", -1,
                         lines(readFile(context, entry.getValue())))));
