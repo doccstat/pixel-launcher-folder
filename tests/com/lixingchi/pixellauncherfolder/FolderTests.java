@@ -69,6 +69,8 @@ public final class FolderTests extends Instrumentation {
             try { Folders.encode(Arrays.asList(Folders.Folder.create("Apps", java.util.Collections.nCopies(101, Folders.PACKAGE + "/.MainActivity")))); throw new AssertionError("App bound"); }
             catch (org.json.JSONException expected) { checks++; }
             Folders.save(context, normalized);
+            String persisted = context.getSharedPreferences("folders", Context.MODE_PRIVATE).getString("json", null);
+            check(persisted != null && persisted.contains(normalized.get(0).id), "Preferences persistence");
             check(Folders.parse(Folders.read(context)).get(0).id.equals(normalized.get(0).id), "Persistence round trip");
             try (Cursor cursor = context.getContentResolver().query(Folders.URI, null, null, null, null)) {
                 check(cursor != null && cursor.moveToFirst(), "Own provider readable");
