@@ -195,7 +195,11 @@ final class FolderRow extends FrameLayout {
         }
         for (Folders.Folder folder : folders) {
             LinearLayout card = Ui.column(getContext(), single ? 0 : 6); card.setGravity(Gravity.CENTER);
-            int previewSize = single && stockIconSize > 0 ? stockIconSize : Ui.dp(getContext(), single ? 60 : 64);
+            // Adaptive icons in BubbleTextView are normalized inside the icon
+            // slot. Match their visible size rather than filling the whole
+            // measured slot with the folder circle.
+            int normalization = single && stockIconSize > 0 ? Math.round(stockIconSize * 0.92f) : 0;
+            int previewSize = normalization > 0 ? normalization : Ui.dp(getContext(), single ? 60 : 64);
             int miniSize = Math.min(Ui.dp(getContext(), single ? 20 : 22),
                     (previewSize - 2 * Ui.dp(getContext(), single ? 7 : 8)) / 2);
             int previewPadding = Ui.dp(getContext(), single ? 7 : 8);
@@ -204,6 +208,7 @@ final class FolderRow extends FrameLayout {
             android.graphics.drawable.GradientDrawable circle = new android.graphics.drawable.GradientDrawable();
             circle.setShape(android.graphics.drawable.GradientDrawable.OVAL); circle.setColor(Ui.surface(getContext()));
             preview.setBackground(circle); preview.setClipToOutline(true);
+            if (single && normalization > 0) preview.setTranslationY(-(stockIconSize - previewSize) / 2f);
             List<String> appKeys = sortedApps(folder, apps);
             for (int i = 0; i < 4; i++) {
                 ImageView icon = new ImageView(getContext());
@@ -226,8 +231,11 @@ final class FolderRow extends FrameLayout {
             label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setGravity(Gravity.CENTER); card.addView(label);
             // BubbleTextView's own drawable-to-label gap preserves the stock
             // baseline without a display-specific magic offset.
-            if (single && stockDrawablePadding > 0)
-                label.setTranslationY(Math.max(0, stockDrawablePadding - Ui.dp(getContext(), 2)));
+            if (single) {
+                float gap = stockDrawablePadding > 0 ? Math.max(0, stockDrawablePadding - Ui.dp(getContext(), 2)) : 0;
+                if (normalization > 0) gap += (stockIconSize - previewSize) / 2f;
+                label.setTranslationY(gap);
+            }
             card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
             card.setOnClickListener(v -> open(folder)); card.setOnLongClickListener(v -> { settings(); return true; });
             content.addView(card, new LinearLayout.LayoutParams(single ? -1 : Ui.dp(getContext(), 96), -1));
