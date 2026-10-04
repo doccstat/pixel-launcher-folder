@@ -20,7 +20,8 @@ The settings app has a global **Keep apps in the main app list too** toggle. Whe
 enabled, folder apps remain in the alphabetical grid and search. When disabled,
 the folder apps are removed from that same profile's alphabetical grid while
 remaining searchable and available from the folder. Apps in another profile are
-never hidden by the setting. Each preview shows up to four app icons in a round
+never hidden by the setting. Each folder’s app list and four-icon preview are sorted alphabetically by the
+visible app label. Each preview shows up to four app icons in a round
 background. The drawer has no Edit button; long-pressing a folder opens
 settings.
 
@@ -56,7 +57,7 @@ python build.py
 `build.py` uses API 37 and build-tools 36.0.0, performs a sequential direct SDK
 build without a Gradle daemon, and writes `dist/PixelLauncherFolders.apk`.
 The optional `python build.py --test` build adds an instrumentation runner. The
-current build passed **67 checks** on the Pixel 11 Pro Fold, including Personal
+current build passed **68 checks** on the Pixel 11 Pro Fold, including Personal
 and Work profile discovery, cross-profile picker isolation, profile-serial
 matching, folder-only filtering, toggle persistence, circular preview drawing,
 four-icon preview slots, and complete folder-cell sizing on the outer and unfolded

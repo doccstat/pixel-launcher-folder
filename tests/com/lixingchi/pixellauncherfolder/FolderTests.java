@@ -135,6 +135,13 @@ public final class FolderTests extends Instrumentation {
             check(!Folders.shouldHide(false, isolated, "work", 101, owner, component), "Removed/recreated profile serial never matches");
             check(!Folders.shouldHide(false, isolated, "work", 100, owner, "other/.Activity"), "Unassigned apps preserved");
             check(Folders.parse(Folders.encode(isolated)).get(0).serial == 100, "Work serial round trip");
+            Folders.Folder order = Folders.Folder.create("Order", Arrays.asList(
+                    "z.pkg/.Z", "a.pkg/.A", "m.pkg/.M"));
+            java.util.Map<String, AppEntry> labels = new java.util.HashMap<>();
+            labels.put("z.pkg/.Z", new AppEntry("z.pkg/.Z"));
+            labels.put("a.pkg/.A", new AppEntry("a.pkg/.A"));
+            labels.put("m.pkg/.M", new AppEntry("m.pkg/.M"));
+            check(FolderRow.sortedApps(order, labels).get(0).equals("a.pkg/.A"), "Folder apps sort by label");
             android.widget.CheckedTextView indicator = new android.widget.CheckedTextView(context);
             MainActivity.membershipIndicator(context, indicator, true, false);
             check(indicator.isChecked() && indicator.getCheckMarkTintList().getDefaultColor() == Ui.pickerActive(context),
