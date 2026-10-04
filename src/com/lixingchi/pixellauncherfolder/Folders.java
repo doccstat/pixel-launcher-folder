@@ -96,6 +96,32 @@ final class Folders {
 
     static String read(Context context) { return readInternal(context); }
 
+    // Earlier text/plain manifests were imported as empty folders. Remove only
+    // empty entries with those reserved metadata names; keep ordinary folders.
+    static List<Folder> withoutBackupArtifacts(List<Folder> folders) {
+        boolean contaminated = false;
+        for (Folder folder : folders)
+            if (folder.apps.isEmpty() && manifestFolderName(folder.name)) contaminated = true;
+        if (!contaminated) return new ArrayList<>(folders);
+        List<Folder> cleaned = new ArrayList<>();
+        for (Folder folder : folders) {
+            boolean manifest = folder.apps.isEmpty() && manifestFolderName(folder.name);
+            if (!manifest) cleaned.add(folder);
+        }
+        return cleaned;
+    }
+
+    private static boolean manifestFolderName(String name) {
+        return name.equals(".pixel-launcher-folders.json")
+                || name.matches("\\.pixel-launcher-folders\\.json \\([0-9]+\\)");
+    }
+
+    static void repairBackupArtifacts(Context context) throws JSONException {
+        List<Folder> current = parse(readInternal(context));
+        List<Folder> cleaned = withoutBackupArtifacts(current);
+        if (cleaned.size() != current.size()) save(context, cleaned);
+    }
+
     static void synchronizeFromBackup(Context context) {
         Uri tree = backupTree(context);
         if (tree == null) return;
@@ -292,6 +318,7 @@ final class Folders {
                         lines(readFile(context, entry.getValue())))));
             }
         }
+        result = withoutBackupArtifacts(result);
         encode(result, keep); // Validate bounds and component structure before returning.
         return new ImportResult(result, keep, skipped);
     }

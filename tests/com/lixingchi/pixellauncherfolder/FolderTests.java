@@ -16,7 +16,12 @@ import java.util.List;
 /** Explicitly invoked test variant only. Restores exact original app preferences in finally. */
 public final class FolderTests extends Instrumentation {
     private int checks;
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    private String mode;
+    @Override public void onCreate(Bundle arguments) {
+        super.onCreate(arguments);
+        mode = arguments == null ? null : arguments.getString("mode");
+        start();
+    }
     private void check(boolean condition, String reason) {
         if (!condition) throw new AssertionError(reason); checks++;
     }
@@ -36,6 +41,24 @@ public final class FolderTests extends Instrumentation {
     @Override public void onStart() {
         Context context = getTargetContext();
         android.content.SharedPreferences preferences = context.getSharedPreferences("folders", Context.MODE_PRIVATE);
+        if ("inspect".equals(mode) || "repair".equals(mode)) {
+            Bundle diagnostic = new Bundle();
+            try {
+                diagnostic.putString("before", Folders.read(context));
+                diagnostic.putString("backup_tree", String.valueOf(Folders.backupTree(context)));
+                if ("repair".equals(mode)) Folders.repairBackupArtifacts(context);
+                diagnostic.putString("after", Folders.read(context));
+                try (Cursor cursor = context.getContentResolver().query(Folders.URI, null, null, null, null)) {
+                    if (cursor == null || !cursor.moveToFirst()) throw new AssertionError("Provider unavailable");
+                    diagnostic.putString("provider", cursor.getString(0));
+                }
+                finish(Activity.RESULT_OK, diagnostic);
+            } catch (Throwable error) {
+                diagnostic.putString("stream", android.util.Log.getStackTraceString(error));
+                finish(Activity.RESULT_CANCELED, diagnostic);
+            }
+            return;
+        }
         boolean existed = preferences.contains("json"); String original = Folders.read(context);
         boolean backupExisted = preferences.contains("backup_tree");
         String originalBackup = preferences.getString("backup_tree", null);
@@ -54,6 +77,17 @@ public final class FolderTests extends Instrumentation {
             check(normalized.get(0).name.equals("Test"), "Names trimmed");
             check(normalized.get(0).apps.size() == 1, "Duplicate components removed");
             check(normalized.get(0).apps.get(0).equals(Folders.PACKAGE + "/" + Folders.PACKAGE + ".MainActivity"), "Components normalized");
+            Folders.Folder artifact = Folders.Folder.create(".pixel-launcher-folders.json", new ArrayList<>());
+            Folders.Folder numberedArtifact = Folders.Folder.create(".pixel-launcher-folders.json (4)", new ArrayList<>());
+            Folders.Folder real = Folders.Folder.create("Finance", Arrays.asList(normalized.get(0).apps.get(0)));
+            List<Folders.Folder> repaired = Folders.withoutBackupArtifacts(Arrays.asList(artifact, numberedArtifact, real));
+            check(repaired.size() == 1 && repaired.get(0).id.equals(real.id), "Repair removes empty metadata folders");
+            check(Folders.withoutBackupArtifacts(normalized).size() == 1, "Ordinary folders are not removed");
+            Folders.Folder userTest = Folders.Folder.create("Test", Arrays.asList("com.example/com.example.Main"));
+            check(Folders.withoutBackupArtifacts(Arrays.asList(artifact, userTest)).size() == 1, "User Test folder is preserved");
+            Folders.Folder nonempty = Folders.Folder.create(artifact.name, real.apps);
+            check(Folders.withoutBackupArtifacts(Arrays.asList(numberedArtifact, nonempty)).size() == 1, "Nonempty similarly named folder is preserved");
+            check(Folders.withoutBackupArtifacts(repaired).get(0).id.equals(real.id), "Repair is idempotent");
             Folders.Folder other = Folders.Folder.create("Other", Arrays.asList(normalized.get(0).apps.get(0)));
             List<Folders.Folder> memberships = Arrays.asList(normalized.get(0), other);
             check(Folders.assignedElsewhere(memberships, normalized.get(0), "personal", ownerSerial(context),

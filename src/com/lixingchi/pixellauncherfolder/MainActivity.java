@@ -34,6 +34,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        try { Folders.repairBackupArtifacts(this); } catch (Exception ignored) { }
         Folders.synchronizeFromBackup(this);
         try { folders = Folders.parse(Folders.read(this)); }
         catch (Exception e) {

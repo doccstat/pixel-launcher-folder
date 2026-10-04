@@ -31,8 +31,9 @@ preserve folder IDs, ordering, Personal/Work profile serials, and the drawer
 toggle. **Import folders** accepts that manifest format or a directory of plain
 `.txt` files; without a manifest, each filename becomes a Personal folder and
 each line may be either a package name or a flattened launcher component. The
-import replaces folder assignments but never changes installed apps. Once a
-backup tree is selected, the private preferences are the fast launcher cache:
+import replaces folder assignments but never changes installed apps. Older
+releases that accidentally imported `.json.txt` manifests are cleaned on the
+next settings-app launch. Once a backup tree is selected, the private preferences are the fast launcher cache:
 the settings app imports the selected backup on startup, and every save writes
 the new state back to the selected tree. Use **Export folders** after selecting
 a new or manually edited directory when you want the current private state to
@@ -55,7 +56,7 @@ python build.py
 `build.py` uses API 37 and build-tools 36.0.0, performs a sequential direct SDK
 build without a Gradle daemon, and writes `dist/PixelLauncherFolders.apk`.
 The optional `python build.py --test` build adds an instrumentation runner. The
-current build passed **55 checks** on the Pixel 11 Pro Fold, including Personal
+current build passed **67 checks** on the Pixel 11 Pro Fold, including Personal
 and Work profile discovery, cross-profile picker isolation, profile-serial
 matching, folder-only filtering, toggle persistence, circular preview drawing,
 four-icon preview slots, and complete folder-cell sizing on the outer and unfolded
