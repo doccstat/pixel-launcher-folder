@@ -37,6 +37,9 @@ public final class FolderTests extends Instrumentation {
         Context context = getTargetContext();
         android.content.SharedPreferences preferences = context.getSharedPreferences("folders", Context.MODE_PRIVATE);
         boolean existed = preferences.contains("json"); String original = Folders.read(context);
+        boolean backupExisted = preferences.contains("backup_tree");
+        String originalBackup = preferences.getString("backup_tree", null);
+        preferences.edit().remove("backup_tree").commit();
         Activity activity = null;
         Bundle result = new Bundle(); int code = Activity.RESULT_OK;
         try {
@@ -194,6 +197,7 @@ public final class FolderTests extends Instrumentation {
         } finally {
             android.content.SharedPreferences.Editor edit = preferences.edit();
             if (existed) edit.putString("json", original); else edit.remove("json");
+            if (backupExisted) edit.putString("backup_tree", originalBackup); else edit.remove("backup_tree");
             if (!edit.commit()) { code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: preference restoration failed"); }
             context.getContentResolver().notifyChange(Folders.URI, null);
             if (activity != null) { Activity close = activity; runOnMainSync(close::finish); }
