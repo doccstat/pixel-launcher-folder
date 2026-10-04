@@ -6,7 +6,7 @@
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
     </queries>
     <application android:label="Pixel Launcher Folders" android:icon="@drawable/ic_folder"
-        android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false"
+        android:theme="@style/AppTheme" android:allowBackup="false"
         android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>

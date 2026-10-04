@@ -18,7 +18,7 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.Toast;
-import android.widget.CheckBox;
+import android.widget.Switch;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -44,7 +44,8 @@ public final class MainActivity extends Activity {
             return;
         }
         LinearLayout page = Ui.column(this, 0);
-        page.setBackgroundColor(Ui.dark(this) ? 0xff17191e : 0xfffafaff);
+        page.setBackgroundColor(Ui.background(this));
+        Ui.applySystemBars(getWindow(), this);
         page.setOnApplyWindowInsetsListener((v, insets) -> {
             android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars()
                     | android.view.WindowInsets.Type.displayCutout());
@@ -57,37 +58,53 @@ public final class MainActivity extends Activity {
 
     private void render() {
         body.removeAllViews();
-        body.addView(Ui.text(this, "Drawer folders", 28));
-        body.addView(Ui.text(this, "Circular folders appear at the top of each profile’s app list, below the tabs. Search always finds your apps.", 16));
-        body.addView(Ui.text(this, "One-time setup: enable this module in Vector for Pixel Launcher only, then restart the launcher yourself. This app does not change Vector settings or restart other apps.", 14));
-        CheckBox keep = new CheckBox(this); keep.setText("Keep apps in the main app list too"); keep.setTextColor(Ui.text(this));
+        body.addView(Ui.headline(this, "Drawer folders"));
+        body.addView(Ui.secondary(this, "Personal and Work folders for Pixel Launcher. Search always finds your apps.", 16));
+        body.addView(Ui.spacer(this, 20));
+
+        LinearLayout setup = Ui.card(this);
+        setup.addView(Ui.text(this, "Get started", 19));
+        setup.addView(Ui.secondary(this, "Enable this module in Vector for Pixel Launcher only, then restart the launcher yourself. This app never changes Vector settings or restarts other apps.", 14));
+        Switch keep = new Switch(this); keep.setText("Keep apps in the main app list too"); keep.setTextColor(Ui.text(this));
+        keep.setTextSize(16); keep.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 4));
+        if (android.os.Build.VERSION.SDK_INT >= 21) keep.setThumbTintList(ColorStateList.valueOf(Ui.primary(this)));
         try { keep.setChecked(Folders.keepInDrawer(Folders.read(this))); } catch (Exception e) { message(e.getMessage()); }
         keep.setOnCheckedChangeListener((button, checked) -> { try { Folders.setKeepInDrawer(this, checked); } catch (Exception e) { message(e.getMessage()); render(); } });
-        body.addView(keep);
-        body.addView(Ui.text(this, "Folder backup uses ordinary files in a folder you choose. Export creates one .txt file per folder plus a metadata manifest; importing simple .txt files treats each line as a package identifier.", 14));
+        setup.addView(keep); body.addView(setup);
+        body.addView(Ui.spacer(this, 16));
+
+        LinearLayout backup = Ui.card(this);
+        backup.addView(Ui.text(this, "Backup and restore", 19));
+        backup.addView(Ui.secondary(this, "Use a folder you can see in Files. Each folder is saved as a .txt file with a small manifest for profile and ordering metadata.", 14));
         android.widget.Button chooseBackup = Ui.button(this, Folders.backupTree(this) == null
                 ? "Choose backup folder" : "Change backup folder", this::chooseBackupFolder);
-        body.addView(chooseBackup);
-        android.widget.Button export = Ui.button(this, "Export folders", this::exportFolders);
-        export.setEnabled(Folders.backupTree(this) != null); body.addView(export);
+        backup.addView(chooseBackup);
+        LinearLayout backupActions = new LinearLayout(this); backupActions.setOrientation(LinearLayout.HORIZONTAL);
+        android.widget.Button export = Ui.primaryButton(this, "Export folders", this::exportFolders);
+        export.setEnabled(Folders.backupTree(this) != null);
         android.widget.Button restore = Ui.button(this, "Import folders", this::importFolders);
-        restore.setEnabled(Folders.backupTree(this) != null); body.addView(restore);
-        for (Profiles profile : Profiles.available(this)) {
-            body.addView(Ui.button(this, "Preview " + (profile.kind.equals("work") ? "Work" : "Personal") + " folders", () -> {
-                FolderRow row = new FolderRow(this, profile.kind, profile.serial, false);
-                new AlertDialog.Builder(this).setTitle("Folder preview").setView(row).setPositiveButton("Close", null).show();
-            }));
-        }
-        body.addView(Ui.button(this, "New folder", () -> {
+        restore.setEnabled(Folders.backupTree(this) != null);
+        backupActions.addView(export, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams restoreParams = new LinearLayout.LayoutParams(0, -2, 1); restoreParams.leftMargin = Ui.dp(this, 8);
+        backupActions.addView(restore, restoreParams); backup.addView(backupActions); body.addView(backup);
+        body.addView(Ui.spacer(this, 16));
+
+        LinearLayout actions = Ui.card(this);
+        actions.addView(Ui.text(this, "Folders", 19));
+        android.widget.Button newFolder = Ui.primaryButton(this, "Create new folder", () -> {
             if (folders.size() >= Folders.MAX_FOLDERS) { message("Use at most 24 folders"); return; }
             edit(null);
-        }));
-        if (folders.isEmpty()) body.addView(Ui.text(this, "No folders yet. Create one and choose its apps.", 16));
+        }); actions.addView(newFolder);
+        for (Profiles profile : Profiles.available(this)) {
+            android.widget.Button preview = Ui.button(this, "Preview " + (profile.kind.equals("work") ? "Work" : "Personal") + " folders", () -> {
+                FolderRow row = new FolderRow(this, profile.kind, profile.serial, false);
+                new AlertDialog.Builder(this).setTitle("Folder preview").setView(row).setPositiveButton("Close", null).show();
+            }); actions.addView(preview);
+        }
+        if (folders.isEmpty()) actions.addView(Ui.secondary(this, "No folders yet. Create one and choose its apps.", 15));
         for (int i = 0; i < folders.size(); i++) {
-            final int index = i;
-            Folders.Folder folder = folders.get(i);
-            LinearLayout line = new LinearLayout(this);
-            line.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            final int index = i; Folders.Folder folder = folders.get(i);
+            LinearLayout line = new LinearLayout(this); line.setGravity(android.view.Gravity.CENTER_VERTICAL);
             View edit = Ui.button(this, folder.name + " · " + (folder.profile.equals("work") ? "Work" : "Personal") + " · " + folder.apps.size(), () -> edit(folder));
             line.addView(edit, new LinearLayout.LayoutParams(0, -2, 1));
             android.widget.Button up = Ui.button(this, "↑", () -> move(index, -1));
@@ -96,8 +113,9 @@ public final class MainActivity extends Activity {
             android.widget.Button down = Ui.button(this, "↓", () -> move(index, 1));
             down.setContentDescription("Move " + folder.name + " down"); down.setEnabled(i < folders.size() - 1);
             line.addView(down, new LinearLayout.LayoutParams(Ui.dp(this, 52), Ui.dp(this, 52)));
-            body.addView(line);
+            actions.addView(line);
         }
+        body.addView(actions);
     }
 
     private boolean save(List<Folders.Folder> next) {
