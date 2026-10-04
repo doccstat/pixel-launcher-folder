@@ -24,6 +24,20 @@ never hidden by the setting. Each preview shows up to four app icons in a round
 background. The drawer has no Edit button; long-pressing a folder opens
 settings.
 
+The settings app also offers a user-selected Android Document Provider backup
+folder. **Export folders** writes one simple `<folder>.txt` file per folder,
+with one package identifier per line, plus `.pixel-launcher-folders.json` to
+preserve folder IDs, ordering, Personal/Work profile serials, and the drawer
+toggle. **Import folders** accepts that manifest format or a directory of plain
+`.txt` files; without a manifest, each filename becomes a Personal folder and
+each line may be either a package name or a flattened launcher component. The
+import replaces folder assignments but never changes installed apps. Once a
+backup tree is selected, the private preferences are the fast launcher cache:
+the settings app imports the selected backup on startup, and every save writes
+the new state back to the selected tree. Use **Export folders** after selecting
+a new or manually edited directory when you want the current private state to
+become authoritative.
+
 Install the APK, then enable only `com.google.android.apps.nexuslauncher` in
 Vector and restart Pixel Launcher through the normal UI. The package has no
 service, receiver, boot action, polling loop, or Vector-setting mutation. The

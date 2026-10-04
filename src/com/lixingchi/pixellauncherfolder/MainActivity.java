@@ -3,7 +3,9 @@ package com.lixingchi.pixellauncherfolder;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.ColorStateList;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -26,11 +28,13 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class MainActivity extends Activity {
+    private static final int PICK_BACKUP_TREE = 41;
     private List<Folders.Folder> folders;
     private LinearLayout body;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        Folders.synchronizeFromBackup(this);
         try { folders = Folders.parse(Folders.read(this)); }
         catch (Exception e) {
             new AlertDialog.Builder(this).setTitle("Could not read folders")
@@ -59,6 +63,14 @@ public final class MainActivity extends Activity {
         try { keep.setChecked(Folders.keepInDrawer(Folders.read(this))); } catch (Exception e) { message(e.getMessage()); }
         keep.setOnCheckedChangeListener((button, checked) -> { try { Folders.setKeepInDrawer(this, checked); } catch (Exception e) { message(e.getMessage()); render(); } });
         body.addView(keep);
+        body.addView(Ui.text(this, "Folder backup uses ordinary files in a folder you choose. Export creates one .txt file per folder plus a metadata manifest; importing simple .txt files treats each line as a package identifier.", 14));
+        android.widget.Button chooseBackup = Ui.button(this, Folders.backupTree(this) == null
+                ? "Choose backup folder" : "Change backup folder", this::chooseBackupFolder);
+        body.addView(chooseBackup);
+        android.widget.Button export = Ui.button(this, "Export folders", this::exportFolders);
+        export.setEnabled(Folders.backupTree(this) != null); body.addView(export);
+        android.widget.Button restore = Ui.button(this, "Import folders", this::importFolders);
+        restore.setEnabled(Folders.backupTree(this) != null); body.addView(restore);
         for (Profiles profile : Profiles.available(this)) {
             body.addView(Ui.button(this, "Preview " + (profile.kind.equals("work") ? "Work" : "Personal") + " folders", () -> {
                 FolderRow row = new FolderRow(this, profile.kind, profile.serial, false);
@@ -96,6 +108,42 @@ public final class MainActivity extends Activity {
         Collections.swap(next, index, index + offset); save(next);
     }
     private void message(String value) { Toast.makeText(this, value, Toast.LENGTH_LONG).show(); }
+
+    private void chooseBackupFolder() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, PICK_BACKUP_TREE);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_BACKUP_TREE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri tree = data.getData(); int flags = data.getFlags() &
+                (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        try {
+            getContentResolver().takePersistableUriPermission(tree, flags);
+            Folders.setBackupTree(this, tree); render();
+            message("Backup folder selected; choose Import or Export");
+        } catch (RuntimeException error) { message("Could not keep access to that folder"); }
+    }
+
+    private void exportFolders() {
+        try { Folders.exportTree(this, folders); message("Folders exported"); }
+        catch (Exception error) { message("Export failed: " + error.getMessage()); }
+    }
+
+    private void importFolders() {
+        new AlertDialog.Builder(this).setTitle("Import folders?")
+                .setMessage("This replaces the current folder assignments. Existing apps are not changed.")
+                .setNegativeButton("Cancel", null).setPositiveButton("Import", (d, w) -> {
+                    try {
+                        Folders.ImportResult imported = Folders.importTree(this);
+                        Folders.save(this, imported.folders, imported.keep); folders = imported.folders; render();
+                        message(imported.skipped == 0 ? "Folders imported" : "Folders imported; some profiles were skipped");
+                    } catch (Exception error) { message("Import failed: " + error.getMessage()); }
+                }).show();
+    }
 
     private void edit(Folders.Folder original) {
         LinearLayout form = Ui.column(this, 20);
