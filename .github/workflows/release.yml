@@ -1,0 +1,78 @@
+name: Signed release candidate
+
+# Manual, main-only, protected environment. Exported main is the source of
+# truth; release tags are created here, not by the Josh exporter.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'doccstat/pixel-launcher-folder' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - name: Install pinned SDK components
+        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+      - name: Validate build guards
+        run: python3 -m unittest discover -s tests/build_tests -v
+      - name: Build with the permanent key and verify the pinned certificate
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_KEYSTORE: ${{ runner.temp }}/pixel-launcher-folders-release.keystore
+          SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          trap 'rm -f "$SIGNING_KEYSTORE"' EXIT
+          test -n "$KEYSTORE_BASE64"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode >"$SIGNING_KEYSTORE"
+          python3 build.py --release
+      - name: Create a draft prerelease (never overwrite an existing version)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version_code=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionCode"])')
+          version_name=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionName"])')
+          tag="$version_code-$version_name"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Version already released; increment versionCode/versionName in Depot.' >&2
+            exit 1
+          fi
+          cat >dist/release-notes.md <<EOF
+          Public beta candidate from $GITHUB_SHA.
+
+          Tested integration: Pixel 11 Pro Fold, Android 17, Pixel Launcher 17.
+          Other Pixel Launcher versions are unverified. Disable the module's
+          Pixel Launcher scope if the launcher has problems. Back up folders first.
+
+          Download the APK and checksum below. The APK certificate is pinned
+          by the release environment. Review the changelog and validate this
+          exact APK on a device before publishing this draft or submitting it
+          to the Xposed Module Repository.
+          EOF
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "$version_name" --draft --prerelease \
+            --notes-file dist/release-notes.md \
+            dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256

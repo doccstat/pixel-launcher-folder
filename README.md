@@ -46,6 +46,39 @@ service, receiver, boot action, polling loop, or Vector-setting mutation. The
 provider accepts reads from Pixel Launcher and the package itself; writes are
 rejected.
 
+## Compatibility and public beta
+
+This is a **public-beta candidate**, not a universal Pixel Launcher module.
+Live integration is validated only on the Pixel 11 Pro Fold, Android 17,
+Pixel Launcher 17. Android 15+ is the install minimum, not a compatibility
+promise: launcher internals can change independently of Android. Private Space
+is deliberately excluded. Disable this module's launcher scope if a launcher
+update breaks compatibility; folder data remains in this app.
+
+The settings UI uses Material You-inspired cards, pill buttons, system dynamic
+colors, and light/dark themes. It uses native Android widgets, **not** the
+Material 3 Expressive component library; no new runtime dependency is injected
+into Pixel Launcher. App-drawer cell geometry remains stock-aligned.
+
+See [PUBLISHING.md](PUBLISHING.md) for the source export, stable signing,
+GitHub CI secrets, and LSPosed submission procedure.
+
+## Public source and releases
+
+Depot is the editable source of truth and exports this package to
+`doccstat/pixel-launcher-folder` with Josh. GitHub Actions builds disposable
+normal and instrumentation APKs on every change. Release builds use one
+permanent Android keystore stored only in the protected `release` environment;
+the workflow refuses to generate a replacement, verifies the certificate
+SHA-256 fingerprint, and emits an APK checksum. Never commit the keystore or
+passwords.
+
+The LSPosed listing is a separate generated repository. Submit
+`[submission] com.lixingchi.pixellauncherfolder` at
+[Xposed-Modules-Repo/submission](https://github.com/Xposed-Modules-Repo/submission),
+then upload the reviewed signed APK to the created module repository using tag
+`2-0.2.0`.
+
 ## Build and validation
 
 Build from Windows, where the Android SDK/JDK is installed:
@@ -70,6 +103,6 @@ its full label, and Android Faker immediately following it in the first row
 after the launcher was reloaded through Vector. Search and scrolling remain
 covered by the launcher’s normal behavior rather than package instrumentation.
 
-For the connected devices used during validation, `67021FDDJ00280` is the Pixel
-11 Pro Fold. The Galaxy Watch entries (`10.0.0.211:37053` and the `adb-RFA...`
-serial) must not be used for installation.
+GitHub CI compiles normal and instrumentation APKs; device instrumentation
+and real launcher/SAF testing are separate release gates. Development CI APKs
+use disposable keys and must not be distributed as release updates.
