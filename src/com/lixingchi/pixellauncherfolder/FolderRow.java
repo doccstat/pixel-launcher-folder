@@ -1,6 +1,5 @@
 package com.lixingchi.pixellauncherfolder;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.database.ContentObserver;
@@ -17,6 +16,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.PopupWindow;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -45,7 +45,7 @@ final class FolderRow extends FrameLayout {
     private long serial;
     private int generation;
     private int folderIndex = -1;
-    private AlertDialog folderDialog;
+    private PopupWindow folderPopup;
     private final ContentObserver observer = new ContentObserver(main) {
         @Override public void onChange(boolean self) { refresh(); }
     };
@@ -104,7 +104,7 @@ final class FolderRow extends FrameLayout {
     void bindProfile(String kind, long profileSerial) {
         if (!profile.equals(kind) || serial != profileSerial) {
             profile = kind; serial = profileSerial; generation++; content.removeAllViews(); apps.clear();
-            if (folderDialog != null) { folderDialog.dismiss(); folderDialog = null; }
+            dismissFolderPopup();
         }
         refresh();
     }
@@ -120,7 +120,7 @@ final class FolderRow extends FrameLayout {
     @Override protected void onDetachedFromWindow() {
         attached = false; generation++;
         if (registered) { getContext().getContentResolver().unregisterContentObserver(observer); registered = false; }
-        if (folderDialog != null) { folderDialog.dismiss(); folderDialog = null; }
+        dismissFolderPopup();
         super.onDetachedFromWindow();
     }
     @Override protected void onWindowVisibilityChanged(int visibility) {
@@ -237,7 +237,7 @@ final class FolderRow extends FrameLayout {
                 label.setTranslationY(gap);
             }
             card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
-            card.setOnClickListener(v -> open(folder)); card.setOnLongClickListener(v -> { settings(); return true; });
+            card.setOnClickListener(v -> open(folder, v)); card.setOnLongClickListener(v -> { settings(); return true; });
             content.addView(card, new LinearLayout.LayoutParams(single ? -1 : Ui.dp(getContext(), 96), -1));
         }
         if (!single && folders.isEmpty())
@@ -245,41 +245,69 @@ final class FolderRow extends FrameLayout {
                     new LinearLayout.LayoutParams(-2, Ui.dp(getContext(), 52)));
     }
 
-    private void open(Folders.Folder folder) {
-        if (folderDialog != null) folderDialog.dismiss();
-        ScrollView scroll = new ScrollView(getContext());
-        LinearLayout list = Ui.column(getContext(), 12); scroll.addView(list);
-        for (String key : sortedApps(folder, apps)) {
-            AppEntry e = entry(key);
-            android.widget.Button item = Ui.button(getContext(), e.label, () -> {
-                try { AppEntry.launch(getContext(), key, folder.profile, folder.serial); if (folderDialog != null) folderDialog.dismiss(); }
-                catch (RuntimeException error) { Toast.makeText(getContext(), "This app is unavailable", Toast.LENGTH_SHORT).show(); }
+    private void dismissFolderPopup() {
+        PopupWindow popup = folderPopup; folderPopup = null;
+        if (popup != null) popup.dismiss();
+    }
+
+    private void open(Folders.Folder folder, View anchor) {
+        dismissFolderPopup();
+        Context context = getContext();
+        android.graphics.Rect bounds = new android.graphics.Rect(); anchor.getWindowVisibleDisplayFrame(bounds);
+        int availableWidth = bounds.width() > 0 ? bounds.width() : getResources().getDisplayMetrics().widthPixels;
+        int availableHeight = bounds.height() > 0 ? bounds.height() : getResources().getDisplayMetrics().heightPixels;
+        int width = Math.min(Ui.dp(context, 520), availableWidth - Ui.dp(context, 32));
+        float scale = Math.max(1f, getResources().getConfiguration().fontScale);
+        int columns = Math.max(2, Math.min(4, (width - Ui.dp(context, 32)) / Ui.dp(context, 96 * scale)));
+        LinearLayout panel = Ui.column(context, 16); panel.setBackground(Ui.cardBackground(context));
+        TextView title = Ui.text(context, folder.name, 24); title.setTypeface(Typeface.DEFAULT_BOLD); title.setMaxLines(2);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END); panel.addView(title); panel.addView(Ui.spacer(context, 6));
+        panel.addView(Ui.secondary(context, (folder.profile.equals("work") ? "Work" : "Personal") + " · " + folder.apps.size()
+                + (folder.apps.size() == 1 ? " app" : " apps"), 14)); panel.addView(Ui.spacer(context, 16));
+        ScrollView scroll = new ScrollView(context); GridLayout grid = new GridLayout(context); grid.setColumnCount(columns); scroll.addView(grid);
+        List<String> keys = sortedApps(folder, apps);
+        for (int i = 0; i < keys.size(); i++) {
+            String key = keys.get(i); AppEntry app = entry(key);
+            LinearLayout item = Ui.column(context, 8); item.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            item.setMinimumHeight(Ui.dp(context, 104 * scale)); item.setBackground(Ui.ripple(context, android.graphics.Color.TRANSPARENT, 16));
+            ImageView icon = new ImageView(context); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            try { icon.setImageDrawable(app.icon(context)); } catch (RuntimeException ignored) { }
+            item.addView(icon, new LinearLayout.LayoutParams(Ui.dp(context, 48), Ui.dp(context, 48))); item.addView(Ui.spacer(context, 8));
+            TextView label = Ui.text(context, app.info == null ? "Unavailable" : app.label, 13); label.setGravity(Gravity.CENTER); label.setMaxLines(2);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END); item.addView(label);
+            item.setFocusable(true); item.setContentDescription(app.label + ", " + (folder.profile.equals("work") ? "Work" : "Personal"));
+            item.setOnClickListener(v -> {
+                try { AppEntry.launch(context, key, folder.profile, folder.serial); dismissFolderPopup(); }
+                catch (RuntimeException error) { Toast.makeText(context, "This app is unavailable", Toast.LENGTH_SHORT).show(); }
             });
-            item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
             item.setOnLongClickListener(v -> {
                 try {
-                    if (AppEntry.startDrag(getContext(), v, key, folder.profile, folder.serial)) {
-                        // Remove our popup after the system has captured its
-                        // drag shadow so it cannot cover the shell drop zones.
-                        if (folderDialog != null) folderDialog.dismiss();
-                    } else Toast.makeText(getContext(), "App dragging is unavailable here", Toast.LENGTH_SHORT).show();
-                } catch (RuntimeException error) {
-                    Toast.makeText(getContext(), "App dragging is unavailable on this launcher build", Toast.LENGTH_SHORT).show();
-                }
-                return true; // Never turn a failed drag into an ordinary launch.
+                    if (AppEntry.startDrag(context, v, key, folder.profile, folder.serial)) dismissFolderPopup();
+                    else Toast.makeText(context, "App dragging is unavailable here", Toast.LENGTH_SHORT).show();
+                } catch (RuntimeException error) { Toast.makeText(context, "App dragging is unavailable on this launcher build", Toast.LENGTH_SHORT).show(); }
+                return true; // A failed drag must never turn into an ordinary launch.
             });
-            try {
-                android.graphics.drawable.Drawable icon = e.icon(getContext());
-                icon.setBounds(0, 0, Ui.dp(getContext(), 36), Ui.dp(getContext(), 36));
-                item.setCompoundDrawablesRelative(icon, null, null, null); item.setCompoundDrawablePadding(Ui.dp(getContext(), 12));
-            } catch (RuntimeException ignored) { }
-            list.addView(item);
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams(GridLayout.spec(i / columns), GridLayout.spec(i % columns, 1, GridLayout.FILL, 1f));
+            params.width = 0; params.height = -2; grid.addView(item, params);
         }
-        if (folder.apps.isEmpty()) list.addView(Ui.text(getContext(), "This folder is empty. Add apps in folder settings.", 16));
-        folderDialog = new AlertDialog.Builder(getContext()).setTitle(folder.name).setView(scroll)
-                .setNeutralButton("Edit folders", (d, w) -> settings()).setPositiveButton("Close", null).create();
-        folderDialog.show();
-        if (folderDialog.getWindow() != null) folderDialog.getWindow().setLayout(-1,
-                Math.min(Ui.dp(getContext(), 520), getResources().getDisplayMetrics().heightPixels * 3 / 4));
+        int desired = Ui.dp(context, Math.max(1, (keys.size() + columns - 1) / columns) * 112 * scale);
+        int height = Math.min(desired, Math.max(Ui.dp(context, 64), Math.min(Ui.dp(context, 420), availableHeight - Ui.dp(context, 190 * scale))));
+        if (keys.isEmpty()) panel.addView(Ui.secondary(context, "No apps yet. Choose apps in folder settings.", 16));
+        else panel.addView(scroll, new LinearLayout.LayoutParams(-1, height));
+        panel.addView(Ui.spacer(context, 12));
+        LinearLayout actions = new LinearLayout(context); actions.setGravity(Gravity.END);
+        actions.addView(Ui.textButton(context, "Edit folders", () -> { dismissFolderPopup(); settings(); }));
+        actions.addView(Ui.textButton(context, "Close", this::dismissFolderPopup)); panel.addView(actions);
+        PopupWindow popup = new PopupWindow(panel, width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+        popup.setOutsideTouchable(true); popup.setClippingEnabled(true); popup.setElevation(Ui.dp(context, 8));
+        popup.setOnDismissListener(() -> { if (folderPopup == popup) folderPopup = null; });
+        // A floating taskbar drawer has a window context, not an Activity.
+        // Attach to the existing drawer token instead of creating a dialog.
+        try { folderPopup = popup; popup.showAtLocation(anchor, Gravity.CENTER, 0, 0); }
+        catch (RuntimeException error) {
+            dismissFolderPopup(); android.util.Log.e("PixelLauncherFolders", "Could not attach folder popup", error);
+            Toast.makeText(context, "Could not open this folder", Toast.LENGTH_SHORT).show();
+        }
     }
 }

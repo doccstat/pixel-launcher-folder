@@ -55,8 +55,10 @@ promise: launcher internals can change independently of Android. Private Space
 is deliberately excluded. Disable this module's launcher scope if a launcher
 update breaks compatibility; folder data remains in this app.
 
-The settings UI uses Material You-inspired cards, pill buttons, system dynamic
-colors, and light/dark themes. It uses native Android widgets, **not** the
+The settings UI uses a native Android, Material-aligned design system: a
+folder-first home surface, a separate settings surface, dynamic light/dark
+colors, a restrained type scale, 48dp controls, readable list rows, and a
+responsive app-grid popup. It uses native Android widgets, **not** the
 Material 3 Expressive component library; no new runtime dependency is injected
 into Pixel Launcher. App-drawer cell geometry remains stock-aligned.
 
@@ -90,11 +92,12 @@ python build.py
 `build.py` uses API 37 and build-tools 36.0.0, performs a sequential direct SDK
 build without a Gradle daemon, and writes `dist/PixelLauncherFolders.apk`.
 The optional `python build.py --test` build adds an instrumentation runner. The
-current build passed **68 checks** on the Pixel 11 Pro Fold, including Personal
+current build passed **79 checks** on the Pixel 11 Pro Fold, including Personal
 and Work profile discovery, cross-profile picker isolation, profile-serial
 matching, folder-only filtering, toggle persistence, circular preview drawing,
-four-icon preview slots, and complete folder-cell sizing on the outer and unfolded
-grid spans. The hook reads the stock `BubbleTextView` icon size, text size, and
+four-icon preview slots, complete folder-cell sizing on the outer and unfolded
+grid spans, redesigned editor/settings navigation, and popup attachment in a
+launcher window context. The hook reads the stock `BubbleTextView` icon size, text size, and
 drawable gap at runtime. Folder circles use the normalized visible icon size
 rather than the full stock icon slot, while preserving the stock icon and label
 positions. The live outer-display screenshot
