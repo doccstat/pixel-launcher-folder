@@ -29,7 +29,9 @@ jobs:
        github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: release
+    # This environment must have no required reviewer so publishing the
+    # reviewed source release can distribute automatically.
+    environment: distribution
     permissions:
       contents: read
     steps:

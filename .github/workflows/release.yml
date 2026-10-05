@@ -1,8 +1,19 @@
 name: Signed release candidate
 
-# Manual, main-only, protected environment. Releases use the reviewed main
-# revision; release tags are created only by this workflow.
+# Main commits create or refresh a signed draft candidate. Publishing the draft
+# is the human review gate and triggers the LSPosed distribution workflow.
 on:
+  push:
+    branches: [main]
+    paths:
+      - AndroidManifest.xml
+      - assets/**
+      - build.py
+      - res/**
+      - src/**
+      - stubs/**
+      - tests/build_tests/**
+      - .github/workflows/**
   workflow_dispatch:
 
 permissions:
@@ -51,7 +62,7 @@ jobs:
           test -n "$KEYSTORE_BASE64"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode >"$SIGNING_KEYSTORE"
           python3 build.py --release
-      - name: Create a draft prerelease (never overwrite an existing version)
+      - name: Create or refresh the signed draft candidate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -59,10 +70,6 @@ jobs:
           version_code=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionCode"])')
           version_name=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionName"])')
           tag="$version_code-$version_name"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo 'Version already released; increment versionCode/versionName.' >&2
-            exit 1
-          fi
           cat >dist/release-notes.md <<EOF
           Public beta candidate from $GITHUB_SHA.
 
@@ -71,11 +78,23 @@ jobs:
           Pixel Launcher scope if the launcher has problems. Back up folders first.
 
           Download the APK and checksum below. The APK certificate is pinned
-          by the release environment. Review the changelog and validate this
-          exact APK on a device before publishing this draft or submitting it
-          to the Xposed Module Repository.
+          by the release environment. Review this exact APK on a device before
+          publishing the draft release.
           EOF
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "$version_name" --draft --prerelease \
-            --notes-file dist/release-notes.md \
-            dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+            if [ "$is_draft" != true ]; then
+              echo "Version $tag is already published; increment versionCode/versionName." >&2
+              exit 1
+            fi
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "$version_name" \
+              --notes-file dist/release-notes.md --draft --prerelease
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
+              dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "$version_name" --draft --prerelease \
+              --notes-file dist/release-notes.md \
+              dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256
+          fi
