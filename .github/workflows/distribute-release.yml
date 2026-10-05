@@ -86,13 +86,13 @@ jobs:
           title=$(cat "$release_dir/title")
           if gh release view "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" \
-              --title "$title" --notes-file "$release_dir/notes.md"
+              --title "$title" --notes-file "$release_dir/notes.md" --prerelease
             gh release upload "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" \
               --clobber "$release_dir/PixelLauncherFolders.apk" \
               "$release_dir/PixelLauncherFolders.apk.sha256"
           else
             gh release create "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" \
-              --title "$title" --notes-file "$release_dir/notes.md" \
+              --title "$title" --notes-file "$release_dir/notes.md" --prerelease \
               "$release_dir/PixelLauncherFolders.apk" \
               "$release_dir/PixelLauncherFolders.apk.sha256"
           fi
