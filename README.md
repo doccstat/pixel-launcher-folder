@@ -2,7 +2,7 @@
 
 # Pixel Launcher Folders
 
-**Personal and Work folders for the Pixel Launcher app drawer**
+**Folders for the Pixel Launcher app drawer**
 
 [![Latest release](https://img.shields.io/github/v/release/doccstat/pixel-launcher-folder?style=flat-square&logo=github)](https://github.com/doccstat/pixel-launcher-folder/releases)
 [![Downloads](https://img.shields.io/github/downloads/doccstat/pixel-launcher-folder/total?style=flat-square)](https://github.com/doccstat/pixel-launcher-folder/releases)
@@ -16,12 +16,12 @@
 
 ## What it does
 
-Pixel Launcher Folders adds real folder cells to the beginning of Pixel
-Launcher's Personal and Work app lists. They look and behave like launcher
-cells, while the folder contents remain managed by this module.
+Pixel Launcher Folders adds real folder cells to the beginning of the Pixel
+Launcher app drawer. They look and behave like launcher cells, while the folder
+contents remain managed by this module.
 
-- Create separate folders for **Personal** and **Work**.
-- Keep profile identity by the exact Android user serial.
+- Create and arrange folders directly in the Pixel Launcher app drawer.
+- Preserve the exact Android profile identity for every folder.
 - Sort folder apps and four-icon previews alphabetically by visible label.
 - Open an app with a tap; long-press an app to start the launcher drag flow.
 - Optionally hide folder apps from the main alphabetical app list.
@@ -42,7 +42,7 @@ The Google folder preview in the first image has been redacted for privacy.
 
 ### Drawer folders
 
-<a href="docs/screenshots/drawer-folders.png"><img src="docs/screenshots/drawer-folders.png" alt="Pixel Launcher Folders drawer folder list with Personal folders" width="100%" /></a>
+<a href="docs/screenshots/drawer-folders.png"><img src="docs/screenshots/drawer-folders.png" alt="Pixel Launcher Folders drawer folder list" width="100%" /></a>
 
 </td>
 <td width="50%" valign="top">
@@ -76,7 +76,7 @@ The Google folder preview in the first image has been redacted for privacy.
 - Android 15 or newer.
 - A rooted device with LSPosed, Vector, or a compatible Xposed framework.
 - Pixel Launcher with package name `com.google.android.apps.nexuslauncher`.
-- A Personal profile; managed Work profiles are supported when available.
+- A usable Android profile; managed profiles are supported when available.
 
 ### Compatibility warning
 
@@ -110,9 +110,9 @@ mutation. It does not restart Pixel Launcher for you.
 
 ### Create and edit
 
-Open the settings app and tap **New folder**. Choose a name, choose Personal
-or an available Work profile, then select apps. A saved folder keeps its
-original profile; create a new folder to choose another profile.
+Open the settings app and tap **New folder**. Choose a name, select the
+profile when prompted, then choose the apps. A saved folder keeps its original
+profile; create a new folder to choose another one.
 
 Tap a folder in the drawer to open it. Long-pressing a folder opens the
 settings app. Apps inside the folder are displayed alphabetically.
@@ -126,7 +126,7 @@ remain in the normal alphabetical launcher list:
 - **Off:** apps are removed from that profile's main app list but remain
   available through the folder and launcher search.
 
-Personal and Work copies are evaluated independently.
+Apps are evaluated independently in each Android profile.
 
 ### Backup and restore
 
@@ -139,12 +139,12 @@ Utility.txt
 ```
 
 Each text file contains one package identifier per line. The JSON manifest
-preserves folder IDs, order, Personal/Work profile kinds, exact user serials,
-and the drawer setting. Changes sync to the selected backup folder after saves;
+preserves folder IDs, order, profile kinds, exact user serials, and the drawer
+setting. Changes sync to the selected backup folder after saves;
 the settings app reloads the backup when it opens.
 
 Import accepts that manifest or a directory of plain `.txt` files. Without a
-manifest, filenames become Personal folder names and lines may be package names
+manifest, filenames become folder names in the default profile and lines may be package names
 or flattened launcher components. Import replaces folder assignments only; it
 never installs, removes, disables, or modifies apps. Folders whose profile is
 unavailable are skipped rather than aborting the whole restore. Export before
@@ -169,7 +169,7 @@ python build.py --test
 ```
 
 The current device instrumentation suite passes **79 checks**, including
-Personal/Work profile isolation, exact serial matching, backup-state safety,
+profile isolation, exact serial matching, backup-state safety,
 folder geometry, settings navigation, popup attachment in a launcher window
 context, and preservation of real user preferences.
 
@@ -181,8 +181,8 @@ see [PUBLISHING.md](PUBLISHING.md).
 
 Report problems in [Issues](https://github.com/doccstat/pixel-launcher-folder/issues)
 with your device model, Android version, Pixel Launcher version/code, module
-version, and reproduction steps. Mention whether the problem affects Personal,
-Work, the outer display, or the unfolded display. Redact personal information
+version, and reproduction steps. Mention the affected Android profile and
+whether you used the outer or unfolded display. Redact personal information
 from screenshots and logs.
 
 App dragging uses the launcher/system activity-drag contract. Split-screen and
