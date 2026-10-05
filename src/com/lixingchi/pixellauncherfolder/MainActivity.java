@@ -104,7 +104,7 @@ public final class MainActivity extends Activity {
         if (folders.isEmpty()) {
             LinearLayout empty = Ui.column(this, 24); empty.setBackground(Ui.rounded(this));
             empty.addView(Ui.text(this, "A place for every app", 22)); empty.addView(Ui.spacer(this, 8));
-            empty.addView(Ui.secondary(this, "Group your everyday apps into a folder. Personal and Work stay separate.", 15));
+            empty.addView(Ui.secondary(this, "Group your everyday apps into folders. Profiles stay separate.", 15));
             body.addView(empty);
         } else {
             LinkedHashSet<String> profileGroups = new LinkedHashSet<>();
