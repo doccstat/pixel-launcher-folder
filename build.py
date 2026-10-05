@@ -103,7 +103,7 @@ def main():
         key.parent.mkdir(parents=True, exist_ok=True)
         run(jtool("keytool"), "-genkeypair", "-keystore", key, "-storepass:env", "SIGNING_STORE_PASSWORD", "-keypass:env", "SIGNING_KEY_PASSWORD",
             "-alias", key_alias, "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
-            "-dname", "CN=Pixel Launcher Folders Development,O=Depot,C=US")
+            "-dname", "CN=Pixel Launcher Folders Development,O=doccstat,C=US")
     output = dist / "PixelLauncherFolders.apk"
     run(tool("apksigner"), "sign", "--ks", key, "--ks-pass", "env:SIGNING_STORE_PASSWORD",
         "--key-pass", "env:SIGNING_KEY_PASSWORD", "--ks-key-alias", key_alias,

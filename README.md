@@ -174,15 +174,15 @@ folder geometry, settings navigation, popup attachment in a launcher window
 context, and preservation of real user preferences.
 
 Development builds use a disposable signing key. Do not distribute them as
-updates. Release builds use the protected, certificate-pinned release workflow;
-see [PUBLISHING.md](PUBLISHING.md).
+updates. Official releases are built and signed by the protected release
+workflow.
 
 ## Support
 
 Report problems in [Issues](https://github.com/doccstat/pixel-launcher-folder/issues)
 with your device model, Android version, Pixel Launcher version/code, module
 version, and reproduction steps. Mention the affected Android profile and
-whether you used the outer or unfolded display. Redact personal information
+whether you used the outer or unfolded display. Redact sensitive information
 from screenshots and logs.
 
 App dragging uses the launcher/system activity-drag contract. Split-screen and
