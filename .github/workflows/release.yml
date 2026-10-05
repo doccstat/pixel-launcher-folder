@@ -87,15 +87,19 @@ jobs:
           version_name=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionName"])')
           tag="$version_code-$version_name"
           cat >dist/release-notes.md <<EOF
-          Public beta candidate from $GITHUB_SHA.
+          ## Pixel Launcher Folders $version_name
 
-          Tested integration: Pixel 11 Pro Fold, Android 17, Pixel Launcher 17.
-          Other Pixel Launcher versions are unverified. Disable the module's
-          Pixel Launcher scope if the launcher has problems. Back up folders first.
+          - Adds customizable folders to the Pixel Launcher app drawer.
+          - Sorts folder apps and previews alphabetically.
+          - Supports user-visible backup and restore.
+          - Preserves Android profile identity without modifying installed apps.
 
-          Download the APK and checksum below. The APK certificate is pinned
-          by the release environment. Review this exact APK on a device before
-          publishing the draft release.
+          Tested on Pixel 11 Pro Fold, Android 17, Pixel Launcher 17.
+          Android 15+ and rooted Pixel Launcher devices are required. Other
+          launcher versions are unverified. App dragging remains experimental.
+
+          The APK is signed with the permanent release key; its SHA-256 checksum
+          is included with this release.
           EOF
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             is_draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
