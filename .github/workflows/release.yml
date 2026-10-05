@@ -1,7 +1,7 @@
 name: Signed release candidate
 
-# Manual, main-only, protected environment. Exported main is the source of
-# truth; release tags are created here, not by the Josh exporter.
+# Manual, main-only, protected environment. Releases use the reviewed main
+# revision; release tags are created only by this workflow.
 on:
   workflow_dispatch:
 
@@ -29,6 +29,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          # setup-android's default also requests the removed legacy "tools" package.
+          packages: platform-tools
       - name: Install pinned SDK components
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Validate build guards
@@ -57,7 +60,7 @@ jobs:
           version_name=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionName"])')
           tag="$version_code-$version_name"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo 'Version already released; increment versionCode/versionName in Depot.' >&2
+            echo 'Version already released; increment versionCode/versionName.' >&2
             exit 1
           fi
           cat >dist/release-notes.md <<EOF
