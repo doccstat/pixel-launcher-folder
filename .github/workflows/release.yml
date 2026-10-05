@@ -1,19 +1,10 @@
 name: Signed release candidate
 
-# Main commits create or refresh a signed draft candidate. Publishing the draft
-# is the human review gate and triggers the LSPosed distribution workflow.
+# Every main push creates a uniquely versioned signed draft candidate.
+# Publishing the reviewed draft triggers the LSPosed distribution workflow.
 on:
   push:
     branches: [main]
-    paths:
-      - AndroidManifest.xml
-      - assets/**
-      - build.py
-      - res/**
-      - src/**
-      - stubs/**
-      - tests/build_tests/**
-      - .github/workflows/**
   workflow_dispatch:
 
 permissions:
@@ -47,6 +38,31 @@ jobs:
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Validate build guards
         run: python3 -m unittest discover -s tests/build_tests -v
+      - name: Assign a unique candidate version for this commit
+        env:
+          CANDIDATE_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          path = 'AndroidManifest.xml'
+          android = '{http://schemas.android.com/apk/res/android}'
+          ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
+          tree = ET.parse(path)
+          root = tree.getroot()
+          base_code = int(root.attrib[android + 'versionCode'])
+          base_name = root.attrib[android + 'versionName']
+          number = int(os.environ['CANDIDATE_NUMBER'])
+          code = base_code * 100000 + number
+          name = f'{base_name}-build.{number}'
+          if code > 2100000000:
+              raise ValueError('Candidate versionCode is outside the Android range')
+          root.set(android + 'versionCode', str(code))
+          root.set(android + 'versionName', name)
+          tree.write(path, encoding='utf-8', xml_declaration=True)
+          print(f'Candidate version: {code}-{name}')
+          PY
       - name: Build with the permanent key and verify the pinned certificate
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -84,7 +100,7 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             is_draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
             if [ "$is_draft" != true ]; then
-              echo "Version $tag is already published; increment versionCode/versionName." >&2
+              echo "Version $tag is already published; refusing to overwrite it." >&2
               exit 1
             fi
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
