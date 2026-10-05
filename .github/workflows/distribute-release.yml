@@ -1,0 +1,98 @@
+name: Distribute published release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published source release tag to distribute'
+        required: true
+        default: '2-0.2.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distribute-release
+  cancel-in-progress: false
+
+env:
+  LISTING_REPOSITORY: Xposed-Modules-Repo/com.lixingchi.pixellauncherfolder
+
+jobs:
+  distribute:
+    if: >-
+      github.repository == 'doccstat/pixel-launcher-folder' &&
+      ((github.event_name == 'release' && github.event.action == 'published') ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install pinned verification tools
+        run: sdkmanager 'build-tools;36.0.0'
+      - name: Download and verify the published source release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_TAG"
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          is_draft=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          test "$is_draft" = false
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'PixelLauncherFolders.apk' \
+            --pattern 'PixelLauncherFolders.apk.sha256' --dir "$tmp"
+          (
+            cd "$tmp"
+            sha256sum -c PixelLauncherFolders.apk.sha256
+          )
+          expected=$(printf '%s' "$SIGNING_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          actual=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            "$tmp/PixelLauncherFolders.apk" |
+            awk -F': ' '/certificate SHA-256 digest:/{print tolower($2); exit}' | tr -d ':')
+          test -n "$actual"
+          test "$actual" = "$expected"
+          mkdir -p "$RUNNER_TEMP/verified-release"
+          cp "$tmp/PixelLauncherFolders.apk" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk"
+          cp "$tmp/PixelLauncherFolders.apk.sha256" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk.sha256"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json name,body --jq '.name' >"$RUNNER_TEMP/verified-release/title"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json body --jq '.body' >"$RUNNER_TEMP/verified-release/notes.md"
+          printf '%s\n' "$RELEASE_TAG" >"$RUNNER_TEMP/verified-release/tag"
+      - name: Create or repair the matching LSPosed release
+        env:
+          GH_TOKEN: ${{ secrets.LSPOSED_RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          release_dir="$RUNNER_TEMP/verified-release"
+          title=$(cat "$release_dir/title")
+          if gh release view "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" \
+              --title "$title" --notes-file "$release_dir/notes.md"
+            gh release upload "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" \
+              --clobber "$release_dir/PixelLauncherFolders.apk" \
+              "$release_dir/PixelLauncherFolders.apk.sha256"
+          else
+            gh release create "$RELEASE_TAG" --repo "$LISTING_REPOSITORY" \
+              --title "$title" --notes-file "$release_dir/notes.md" \
+              "$release_dir/PixelLauncherFolders.apk" \
+              "$release_dir/PixelLauncherFolders.apk.sha256"
+          fi
