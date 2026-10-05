@@ -22,6 +22,15 @@ final class Folders {
     static final String LAUNCHER = "com.google.android.apps.nexuslauncher";
     static final Uri URI = Uri.parse("content://" + PACKAGE + ".config/folders");
     static final int MAX_FOLDERS = 24, MAX_APPS = 100, MAX_BYTES = 262144;
+    // Instrumentation selects a separate preference file before exercising
+    // saves/UI. A process crash must never strand test data in real folders.
+    static boolean testing;
+    static android.content.SharedPreferences preferences(Context context) {
+        return context.getSharedPreferences(testing ? "folders-instrumentation" : "folders", Context.MODE_PRIVATE);
+    }
+    static void notifyChange(Context context) {
+        if (!testing) context.getContentResolver().notifyChange(URI, null);
+    }
 
     static final class Folder {
         final String id;
@@ -90,8 +99,7 @@ final class Folders {
     }
 
     private static String readInternal(Context context) {
-        return context.getSharedPreferences("folders", Context.MODE_PRIVATE)
-                .getString("json", "{\"version\":1,\"folders\":[]}");
+        return preferences(context).getString("json", "{\"version\":1,\"folders\":[]}");
     }
 
     static String read(Context context) { return readInternal(context); }
@@ -130,8 +138,8 @@ final class Folders {
             ImportResult external = importTree(context);
             String raw = encode(external.folders, external.keep);
             if (!raw.equals(readInternal(context))) {
-                context.getSharedPreferences("folders", Context.MODE_PRIVATE).edit().putString("json", raw).commit();
-                context.getContentResolver().notifyChange(URI, null);
+                preferences(context).edit().putString("json", raw).commit();
+                notifyChange(context);
             }
         } catch (Exception ignored) { }
     }
@@ -142,9 +150,9 @@ final class Folders {
 
     static void save(Context context, List<Folder> folders, boolean keep) throws JSONException {
         String raw = encode(folders, keep);
-        if (!context.getSharedPreferences("folders", Context.MODE_PRIVATE).edit().putString("json", raw).commit())
+        if (!preferences(context).edit().putString("json", raw).commit())
             throw new IllegalStateException("Could not save folders");
-        context.getContentResolver().notifyChange(URI, null);
+        notifyChange(context);
         syncBackup(context);
     }
 
@@ -155,14 +163,12 @@ final class Folders {
     }
 
     static Uri backupTree(Context context) {
-        String value = context.getSharedPreferences("folders", Context.MODE_PRIVATE)
-                .getString("backup_tree", null);
+        String value = preferences(context).getString("backup_tree", null);
         return value == null ? null : Uri.parse(value);
     }
 
     static void setBackupTree(Context context, Uri tree) {
-        context.getSharedPreferences("folders", Context.MODE_PRIVATE).edit()
-                .putString("backup_tree", tree.toString()).commit();
+        preferences(context).edit().putString("backup_tree", tree.toString()).commit();
     }
 
     static final class ImportResult {
@@ -333,9 +339,9 @@ final class Folders {
 
     static void setKeepInDrawer(Context context, boolean keep) throws JSONException {
         String raw = encode(parse(read(context)), keep);
-        if (!context.getSharedPreferences("folders", Context.MODE_PRIVATE).edit().putString("json", raw).commit())
+        if (!preferences(context).edit().putString("json", raw).commit())
             throw new IllegalStateException("Could not save display option");
-        context.getContentResolver().notifyChange(URI, null);
+        notifyChange(context);
         syncBackup(context);
     }
 

@@ -40,7 +40,6 @@ public final class FolderTests extends Instrumentation {
     }
     @Override public void onStart() {
         Context context = getTargetContext();
-        android.content.SharedPreferences preferences = context.getSharedPreferences("folders", Context.MODE_PRIVATE);
         if ("inspect".equals(mode) || "repair".equals(mode)) {
             Bundle diagnostic = new Bundle();
             try {
@@ -59,6 +58,11 @@ public final class FolderTests extends Instrumentation {
             }
             return;
         }
+        android.content.SharedPreferences realPreferences = context.getSharedPreferences("folders", Context.MODE_PRIVATE);
+        java.util.Map<String, ?> realBefore = new java.util.HashMap<>(realPreferences.getAll());
+        Folders.testing = true;
+        android.content.SharedPreferences preferences = Folders.preferences(context);
+        preferences.edit().clear().commit();
         boolean existed = preferences.contains("json"); String original = Folders.read(context);
         boolean backupExisted = preferences.contains("backup_tree");
         String originalBackup = preferences.getString("backup_tree", null);
@@ -70,6 +74,11 @@ public final class FolderTests extends Instrumentation {
             check(GridSizing.appSpan(12, 6) == 2, "Unfolded drawer app occupies two internal spans");
             check(GridSizing.appSpan(4, 4) == 1, "Unmultiplied app grid remains one span");
             check(Folders.parse("{\"version\":1,\"folders\":[]}").isEmpty(), "Empty config");
+            check(Folders.preferences(context) != realPreferences, "Instrumentation uses separate durable state");
+            android.content.ClipData clip = AppEntry.activityClip("Test", null, android.os.Process.myUserHandle());
+            check(clip.getDescription().hasMimeType("application/vnd.android.activity"), "Shell activity drag MIME type");
+            check(android.os.Process.myUserHandle().equals(clip.getItemAt(0).getIntent().getParcelableExtra(android.content.Intent.EXTRA_USER)),
+                    "Drag payload preserves exact user");
             reject("{\"version\":2,\"folders\":[]}"); reject("{}"); reject("not-json");
             List<Folders.Folder> list = new ArrayList<>();
             list.add(Folders.Folder.create(" Test ", Arrays.asList(Folders.PACKAGE + "/.MainActivity", Folders.PACKAGE + "/.MainActivity")));
@@ -106,7 +115,7 @@ public final class FolderTests extends Instrumentation {
             try { Folders.encode(Arrays.asList(Folders.Folder.create("Apps", java.util.Collections.nCopies(101, Folders.PACKAGE + "/.MainActivity")))); throw new AssertionError("App bound"); }
             catch (org.json.JSONException expected) { checks++; }
             Folders.save(context, normalized);
-            String persisted = context.getSharedPreferences("folders", Context.MODE_PRIVATE).getString("json", null);
+            String persisted = context.getSharedPreferences("folders-instrumentation", Context.MODE_PRIVATE).getString("json", null);
             check(persisted != null && persisted.contains(normalized.get(0).id), "Preferences persistence");
             check(Folders.parse(Folders.read(context)).get(0).id.equals(normalized.get(0).id), "Persistence round trip");
             try (Cursor cursor = context.getContentResolver().query(Folders.URI, null, null, null, null)) {
@@ -232,7 +241,8 @@ public final class FolderTests extends Instrumentation {
                     check(width * columns == availableWidth, "Folder and following apps fill one row");
                 }
             });
-            result.putString("stream", "PASS: " + checks + " checks; editor and preview opened; original preferences restored.\n");
+            check(realBefore.equals(realPreferences.getAll()), "User preferences untouched by tests");
+            result.putString("stream", "PASS: " + checks + " checks; editor and preview opened; user preferences untouched.\n");
         } catch (Throwable error) {
             code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(error));
         } finally {
@@ -240,7 +250,6 @@ public final class FolderTests extends Instrumentation {
             if (existed) edit.putString("json", original); else edit.remove("json");
             if (backupExisted) edit.putString("backup_tree", originalBackup); else edit.remove("backup_tree");
             if (!edit.commit()) { code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: preference restoration failed"); }
-            context.getContentResolver().notifyChange(Folders.URI, null);
             if (activity != null) { Activity close = activity; runOnMainSync(close::finish); }
         }
         finish(code, result);
