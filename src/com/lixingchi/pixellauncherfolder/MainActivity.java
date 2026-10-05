@@ -45,14 +45,14 @@ public final class MainActivity extends Activity {
         }
         LinearLayout page = Ui.column(this, 0);
         page.setBackgroundColor(Ui.background(this));
-        Ui.applySystemBars(getWindow(), this);
         page.setOnApplyWindowInsetsListener((v, insets) -> {
             android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars()
                     | android.view.WindowInsets.Type.displayCutout());
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom); return insets;
         });
         ScrollView scroll = new ScrollView(this); body = Ui.column(this, 20);
-        scroll.addView(body); page.addView(scroll); setContentView(page); page.requestApplyInsets();
+        scroll.addView(body); page.addView(scroll); setContentView(page);
+        Ui.applySystemBars(getWindow(), this); page.requestApplyInsets();
         render();
     }
 

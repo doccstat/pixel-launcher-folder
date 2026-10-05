@@ -256,6 +256,18 @@ final class FolderRow extends FrameLayout {
                 catch (RuntimeException error) { Toast.makeText(getContext(), "This app is unavailable", Toast.LENGTH_SHORT).show(); }
             });
             item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            item.setOnLongClickListener(v -> {
+                try {
+                    if (AppEntry.startDrag(getContext(), v, key, folder.profile, folder.serial)) {
+                        // Remove our popup after the system has captured its
+                        // drag shadow so it cannot cover the shell drop zones.
+                        if (folderDialog != null) folderDialog.dismiss();
+                    } else Toast.makeText(getContext(), "App dragging is unavailable here", Toast.LENGTH_SHORT).show();
+                } catch (RuntimeException error) {
+                    Toast.makeText(getContext(), "App dragging is unavailable on this launcher build", Toast.LENGTH_SHORT).show();
+                }
+                return true; // Never turn a failed drag into an ordinary launch.
+            });
             try {
                 android.graphics.drawable.Drawable icon = e.icon(getContext());
                 icon.setBounds(0, 0, Ui.dp(getContext(), 36), Ui.dp(getContext(), 36));
