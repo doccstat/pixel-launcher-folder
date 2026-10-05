@@ -176,10 +176,12 @@ public final class FolderTests extends Instrumentation {
             final Activity screen = activity;
             waitForIdleSync();
             runOnMainSync(() -> {
-                check(find(screen.getWindow().getDecorView(), "Drawer folders") != null, "Editor opened");
-                check(find(screen.getWindow().getDecorView(), "Test · Personal · 1") != null, "Saved folder rendered");
-                check(find(screen.getWindow().getDecorView(), "Keep apps in the main app list too") != null, "Display option rendered");
+                check(find(screen.getWindow().getDecorView(), "Your folders") != null, "Editor opened");
+                check(find(screen.getWindow().getDecorView(), "Test") != null, "Saved folder rendered");
+                View settings = find(screen.getWindow().getDecorView(), "Settings"); check(settings != null && settings.performClick(), "Settings navigation");
             });
+            waitForIdleSync();
+            runOnMainSync(() -> check(find(screen.getWindow().getDecorView(), "Keep folder apps in All apps") != null, "Display option rendered"));
             // Exercise the actual row independently of Vector. Draw only our view,
             // including when the lockscreen covers the Activity.
             final FolderRow[] preview = new FolderRow[1];
@@ -240,6 +242,32 @@ public final class FolderTests extends Instrumentation {
                     check(label.getBottom() <= card.getHeight(), "Complete label inside drawer cell");
                     check(width * columns == availableWidth, "Folder and following apps fill one row");
                 }
+            });
+            // The floating taskbar drawer supplies a themed window context,
+            // not an Activity. A popup must obtain its token from the attached
+            // anchor rather than attempting to show an Activity-only dialog.
+            runOnMainSync(() -> {
+                android.view.ContextThemeWrapper windowContext = new android.view.ContextThemeWrapper(
+                        screen.getApplicationContext(), android.R.style.Theme_Material_Light_NoActionBar);
+                preview[0] = new FolderRow(windowContext, "personal", Profiles.personalSerial(context), false, true);
+                preview[0].bindFolderIndex(0); screen.setContentView(preview[0]);
+            });
+            waitForIdleSync(); FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            runOnMainSync(() -> {
+                try {
+                    TextView label = (TextView) find(preview[0], "Test");
+                    check(label != null, "Folder rendered with non-Activity context");
+                    View card = (View) label.getParent();
+                    check(card.performClick(), "Folder tap handled");
+                    java.lang.reflect.Field popupField = FolderRow.class.getDeclaredField("folderPopup"); popupField.setAccessible(true);
+                    android.widget.PopupWindow popup = (android.widget.PopupWindow) popupField.get(preview[0]);
+                    check(popup != null && popup.isShowing(), "Folder popup attaches without Activity context");
+                    check(find(popup.getContentView(), "Test") != null, "Popup shows folder title");
+                    check(find(popup.getContentView(), "Close").performClick() && !popup.isShowing(), "Close dismisses popup");
+                    card.performClick(); popup = (android.widget.PopupWindow) popupField.get(preview[0]);
+                    screen.setContentView(new android.widget.FrameLayout(screen));
+                    check(!popup.isShowing(), "Detaching drawer dismisses popup");
+                } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
             });
             check(realBefore.equals(realPreferences.getAll()), "User preferences untouched by tests");
             result.putString("stream", "PASS: " + checks + " checks; editor and preview opened; user preferences untouched.\n");
