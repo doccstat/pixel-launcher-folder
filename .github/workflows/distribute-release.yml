@@ -81,12 +81,29 @@ jobs:
             cd "$tmp"
             sha256sum -c PixelLauncherFolders.apk.sha256
           )
-          expected=$(printf '%s' "$SIGNING_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          actual=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
-            "$tmp/PixelLauncherFolders.apk" |
-            awk -F': ' '/certificate SHA-256 digest:/{print tolower($2); exit}' | tr -d ':')
-          test -n "$actual"
-          test "$actual" = "$expected"
+          expected=$(printf '%s' "$SIGNING_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
+          if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+            echo '::error::Set ANDROID_SIGNING_CERT_SHA256 as a variable in the distribution environment (64 hex digits; not the APK checksum).'
+            exit 1
+          fi
+          if ! "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            "$tmp/PixelLauncherFolders.apk" >"$tmp/apksigner.txt" 2>&1; then
+            cat "$tmp/apksigner.txt"
+            echo '::error::APK signature verification failed.'
+            exit 1
+          fi
+          actual=$(awk -F': ' '/^Signer #1 certificate SHA-256 digest:/{print tolower($2)}' \
+            "$tmp/apksigner.txt" | tr -d ':[:space:]')
+          if ! [[ "$actual" =~ ^[0-9a-f]{64}$ ]]; then
+            cat "$tmp/apksigner.txt"
+            echo '::error::Could not read the APK signer certificate SHA-256 digest.'
+            exit 1
+          fi
+          if [ "$actual" != "$expected" ]; then
+            printf '::error::APK certificate mismatch: expected %s; got %s.\n' "$expected" "$actual"
+            exit 1
+          fi
+          echo 'APK signature and pinned certificate: OK'
           mkdir -p "$RUNNER_TEMP/verified-release"
           cp "$tmp/PixelLauncherFolders.apk" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk"
           cp "$tmp/PixelLauncherFolders.apk.sha256" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk.sha256"
