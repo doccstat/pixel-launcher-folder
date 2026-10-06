@@ -1,7 +1,7 @@
 name: Signed release candidate
 
-# Every main push creates a uniquely versioned signed draft candidate.
-# Publishing the reviewed draft triggers the LSPosed distribution workflow.
+# Every main push builds a uniquely versioned candidate. Only the newest
+# successful candidate remains as a draft; publishing it triggers LSPosed.
 on:
   push:
     branches: [main]
@@ -78,7 +78,7 @@ jobs:
           test -n "$KEYSTORE_BASE64"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode >"$SIGNING_KEYSTORE"
           python3 build.py --release
-      - name: Create or refresh the signed draft candidate
+      - name: Create or refresh the newest signed draft candidate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -101,20 +101,4 @@ jobs:
           The APK is signed with the permanent release key; its SHA-256 checksum
           is included with this release.
           EOF
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            is_draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
-            if [ "$is_draft" != true ]; then
-              echo "Version $tag is already published; refusing to overwrite it." >&2
-              exit 1
-            fi
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "$version_name" \
-              --notes-file dist/release-notes.md --draft --prerelease
-            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
-              dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256
-          else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "$version_name" --draft --prerelease \
-              --notes-file dist/release-notes.md \
-              dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256
-          fi
+          python3 .github/scripts/refresh-draft.py "$tag" "$version_name" "$GITHUB_SHA"
