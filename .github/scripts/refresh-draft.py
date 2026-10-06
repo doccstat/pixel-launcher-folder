@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 CANDIDATE = re.compile(r"([1-9][0-9]*)-(.+-build\.[1-9][0-9]*)")
 ASSETS = ("PixelLauncherFolders.apk", "PixelLauncherFolders.apk.sha256")
@@ -16,6 +17,24 @@ def gh(*args):
 
 def api(endpoint, *args):
     return json.loads(gh("api", endpoint, *args))
+
+
+def verify_replacement(repo, tag):
+    # Use the CLI's draft-aware lookup, not /releases/tags (published releases
+    # only), and do not assume the paginated release list already includes it.
+    for attempt in range(12):
+        try:
+            current = json.loads(gh("release", "view", tag, "--repo", repo,
+                                    "--json", "tagName,assets"))
+            assets = {a["name"] for a in current.get("assets", [])
+                      if a.get("state") == "uploaded"}
+            if current.get("tagName") == tag and set(ASSETS).issubset(assets):
+                return
+        except subprocess.CalledProcessError:
+            pass
+        if attempt < 11:
+            time.sleep(2)
+    raise RuntimeError("Replacement release/assets not visible; retaining previous drafts")
 
 
 def managed(release):
@@ -51,11 +70,9 @@ def refresh(repo, tag, title, sha, directory="dist"):
     else:
         gh("release", "create", tag, *options, *assets)
     # Only clean up after both replacement assets were uploaded successfully.
+    verify_replacement(repo, tag)
     pages = api(f"repos/{repo}/releases?per_page=100", "--paginate", "--slurp")
     releases = [release for page in pages for release in page]
-    current = next(r for r in releases if r["tag_name"] == tag)
-    if not set(ASSETS).issubset({a["name"] for a in current.get("assets", [])}):
-        raise ValueError("Replacement assets missing; retaining previous drafts")
     for release in releases:
         if not managed(release) or not release["draft"]:
             continue
