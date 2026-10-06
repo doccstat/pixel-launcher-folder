@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
     # This environment must have no required reviewer so publishing the
     # reviewed source release can distribute automatically.
-    environment: distribution
+    environment: release
     permissions:
       contents: read
     steps:
@@ -83,7 +83,7 @@ jobs:
           )
           expected=$(printf '%s' "$SIGNING_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
           if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
-            echo '::error::Set ANDROID_SIGNING_CERT_SHA256 as a variable in the distribution environment (64 hex digits; not the APK checksum).'
+            echo '::error::Set ANDROID_SIGNING_CERT_SHA256 as a variable in the release environment (64 hex digits; not the APK checksum).'
             exit 1
           fi
           if ! "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
