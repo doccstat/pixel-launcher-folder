@@ -4,11 +4,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Published source release tag to distribute'
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -34,6 +29,30 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Resolve the published source release
+        id: source_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_TAG: ${{ github.event.release.tag_name || '' }}
+        run: |
+          set -euo pipefail
+          tag="$REQUESTED_TAG"
+          if [ -z "$tag" ]; then
+            # Include published prereleases; GitHub's /releases/latest excludes them.
+            tag=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '[.[][] | select(.draft == false and .published_at != null)] | sort_by(.published_at) | last | .tag_name // empty')
+          fi
+          if [ -z "$tag" ]; then
+            echo 'No published source release found. Publish a reviewed draft first.' >&2
+            exit 1
+          fi
+          is_draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          if [ "$is_draft" != false ]; then
+            echo 'The selected release is still a draft. Publish it before distributing.' >&2
+            exit 1
+          fi
+          printf 'Distributing published source release: %s\n' "$tag"
+          printf 'tag=%s\n' "$tag" >>"$GITHUB_OUTPUT"
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
@@ -47,7 +66,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_TAG: ${{ steps.source_release.outputs.tag }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_TAG"
@@ -79,7 +98,7 @@ jobs:
       - name: Create or repair the matching LSPosed release
         env:
           GH_TOKEN: ${{ secrets.LSPOSED_RELEASE_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_TAG: ${{ steps.source_release.outputs.tag }}
         run: |
           set -euo pipefail
           test -n "$GH_TOKEN"
