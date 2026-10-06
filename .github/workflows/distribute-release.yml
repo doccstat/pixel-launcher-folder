@@ -40,7 +40,7 @@ jobs:
           if [ -z "$tag" ]; then
             # Include published prereleases; GitHub's /releases/latest excludes them.
             tag=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --jq '[.[][] | select(.draft == false and .published_at != null)] | sort_by(.published_at) | last | .tag_name // empty')
+              | jq -r '[.[][] | select(.draft == false and .published_at != null)] | sort_by(.published_at) | last | .tag_name // empty')
           fi
           if [ -z "$tag" ]; then
             echo 'No published source release found. Publish a reviewed draft first.' >&2
