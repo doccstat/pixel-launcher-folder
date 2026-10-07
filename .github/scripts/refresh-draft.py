@@ -40,7 +40,7 @@ def verify_replacement(repo, tag):
 def managed(release):
     match = CANDIDATE.fullmatch(release["tag_name"])
     return bool(match and release.get("author", {}).get("login") == "github-actions[bot]"
-                and release.get("name") == match[2] and release.get("prerelease"))
+                and release.get("name") == match[2])
 
 
 def refresh(repo, tag, title, sha, directory="dist"):
@@ -62,10 +62,12 @@ def refresh(repo, tag, title, sha, directory="dist"):
     if existing and (not existing["draft"] or not managed(existing)):
         raise ValueError("Refusing to overwrite a published or unrelated release")
     options = ("--repo", repo, "--target", sha, "--title", title,
-               "--notes-file", f"{directory}/release-notes.md", "--draft", "--prerelease")
+               "--notes-file", f"{directory}/release-notes.md", "--draft")
     assets = [f"{directory}/{name}" for name in ASSETS]
     if existing:
         gh("release", "edit", tag, *options)
+        gh("api", f"repos/{repo}/releases/{existing['id']}", "--method", "PATCH",
+           "-F", "prerelease=false")
         gh("release", "upload", tag, "--repo", repo, "--clobber", *assets)
     else:
         gh("release", "create", tag, *options, *assets)
