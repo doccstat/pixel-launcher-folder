@@ -18,13 +18,37 @@ import java.lang.reflect.Proxy;
 /** Bridges a PopupWindow's gesture into the Home drawer's native drag controller. */
 final class LauncherDrag {
     private final Object controller;
+    private final Object launcher;
     private final View layer;
+    private final Field touchInProgress;
     private final Method touch, cancel;
+    private boolean claimedTouch;
 
-    private LauncherDrag(Object controller, View layer) throws ReflectiveOperationException {
-        this.controller = controller; this.layer = layer;
+    private LauncherDrag(Object controller, Object launcher, View layer) throws ReflectiveOperationException {
+        this.controller = controller; this.launcher = launcher; this.layer = layer;
+        touchInProgress = declaredField(launcher, "mTouchInProgress");
         touch = controller.getClass().getMethod("onControllerTouchEvent", MotionEvent.class);
         cancel = controller.getClass().getMethod("cancelDrag");
+    }
+
+    private static Field declaredField(Object object, String name) throws NoSuchFieldException {
+        for (Class<?> type = object.getClass(); type != null; type = type.getSuperclass()) {
+            try { Field field = type.getDeclaredField(name); field.setAccessible(true); return field; }
+            catch (NoSuchFieldException ignored) { }
+        }
+        throw new NoSuchFieldException(name);
+    }
+
+    private void claimTouch() throws IllegalAccessException {
+        touchInProgress.setBoolean(launcher, true);
+        claimedTouch = true;
+    }
+
+    private void releaseTouch() {
+        if (!claimedTouch) return;
+        try { touchInProgress.setBoolean(launcher, false); }
+        catch (IllegalAccessException error) { android.util.Log.w("PixelLauncherFolders", "Could not release launcher touch state", error); }
+        claimedTouch = false;
     }
 
     static Object field(Object object, String name) throws ReflectiveOperationException {
@@ -85,7 +109,7 @@ final class LauncherDrag {
             Object item = appType.getConstructor(appType).newInstance(app);
             Object controller = field(home, "mDragController");
             View layer = (View) home.getClass().getMethod("getDragLayer").invoke(home);
-            session = new LauncherDrag(controller, layer);
+            session = new LauncherDrag(controller, home, layer);
             Class<?> optionsType = Class.forName("com.android.launcher3.dragndrop.DragOptions", false, loader);
             Class<?> sourceType = Class.forName("com.android.launcher3.DragSource", false, loader);
             Class<?> itemType = Class.forName("com.android.launcher3.model.data.ItemInfo", false, loader);
@@ -108,6 +132,10 @@ final class LauncherDrag {
                     downX - origin[0], downY - origin[1], 0);
             try { intercept.invoke(controller, down); } finally { down.recycle(); }
             attempted = true;
+            // LauncherDragController cancels synthetic starts unless the Launcher
+            // believes a touch is in progress. The real down occurred in our
+            // PopupWindow, so claim that state for this forwarded gesture.
+            session.claimTouch();
             // Same native entry point used by Workspace.beginDragShared. A popup is
             // not a descendant of DragLayer, so supply screen-relative icon bounds
             // explicitly rather than asking DragPreviewProvider to walk its parents.
@@ -135,14 +163,19 @@ final class LauncherDrag {
     }
 
     void move(MotionEvent event) {
+        int action = event.getActionMasked();
         MotionEvent copy = inLayer(event, layer);
         try { touch.invoke(controller, copy); }
         catch (ReflectiveOperationException error) { cancel(); throw new IllegalStateException(error); }
-        finally { copy.recycle(); }
+        finally {
+            copy.recycle();
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) releaseTouch();
+        }
     }
 
     void cancel() {
         try { cancel.invoke(controller); }
         catch (ReflectiveOperationException error) { android.util.Log.e("PixelLauncherFolders", "Could not cancel drag", error); }
+        finally { releaseTouch(); }
     }
 }
