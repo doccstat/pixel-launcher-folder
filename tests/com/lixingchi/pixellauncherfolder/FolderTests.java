@@ -94,8 +94,14 @@ public final class FolderTests extends Instrumentation {
             check(Folders.preferences(context) != realPreferences, "Instrumentation uses separate durable state");
             android.content.ClipData clip = AppEntry.activityClip("Test", null, android.os.Process.myUserHandle());
             check(clip.getDescription().hasMimeType("application/vnd.android.activity"), "Shell activity drag MIME type");
+            check(clip.getItemAt(0).getIntent().hasExtra("android.intent.extra.PENDING_INTENT"),
+                    "Drag payload uses the WM Shell pending-intent key");
             check(android.os.Process.myUserHandle().equals(clip.getItemAt(0).getIntent().getParcelableExtra(android.content.Intent.EXTRA_USER)),
                     "Drag payload preserves exact user");
+            check((AppEntry.activityDragFlags() & android.view.View.DRAG_FLAG_GLOBAL) != 0
+                    && (AppEntry.activityDragFlags() & android.view.View.DRAG_FLAG_OPAQUE) != 0
+                    && (AppEntry.activityDragFlags() & (1 << 11)) != 0,
+                    "Taskbar-compatible drag flags are present");
             android.content.ComponentName dragComponent = new android.content.ComponentName("example", "example.Main");
             android.os.UserHandle personal = android.os.Process.myUserHandle();
             android.os.UserHandle work = android.os.UserHandle.getUserHandleForUid(1000000);
