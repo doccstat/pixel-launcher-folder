@@ -13,6 +13,7 @@ import android.view.View;
 import android.widget.ImageView;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 
 /** Bridges a PopupWindow's gesture into the Home drawer's native drag controller. */
 final class LauncherDrag {
@@ -39,6 +40,29 @@ final class LauncherDrag {
         for (Object app : apps) if (component.equals(field(app, "componentName"))
                 && user.equals(field(app, "user"))) return app;
         return null;
+    }
+
+    /** Pixel's controller dereferences this even when the drag shadow is a Drawable. */
+    static Object draggable(Class<?> type, Rect bounds) {
+        Rect snapshot = new Rect(bounds);
+        return Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (proxy, method, args) -> {
+            switch (method.getName()) {
+                case "getViewType": return 0; // DRAGGABLE_ICON, like BubbleTextView.
+                case "getSourceVisualDragBounds":
+                case "getWorkspaceVisualDragBounds": ((Rect) args[0]).set(snapshot); return null;
+                case "prepareDrawDragView":
+                    Class<?> closeable = method.getReturnType();
+                    return Proxy.newProxyInstance(closeable.getClassLoader(), new Class<?>[]{closeable},
+                            (unused, close, arguments) -> {
+                                if ("close".equals(close.getName())) return null;
+                                throw new UnsupportedOperationException(close.toString());
+                            });
+                case "equals": return proxy == args[0];
+                case "hashCode": return System.identityHashCode(proxy);
+                case "toString": return "PixelLauncherFolders icon drag source";
+                default: throw new UnsupportedOperationException(method.toString());
+            }
+        });
     }
 
     static LauncherDrag start(Context home, ImageView icon, String key, String kind, long serial,
@@ -87,7 +111,8 @@ final class LauncherDrag {
             // Same native entry point used by Workspace.beginDragShared. A popup is
             // not a descendant of DragLayer, so supply screen-relative icon bounds
             // explicitly rather than asking DragPreviewProvider to walk its parents.
-            start.invoke(controller, new BitmapDrawable(home.getResources(), bitmap), null, null,
+            Object draggable = draggable(draggableType, new Rect(0, 0, width, height));
+            start.invoke(controller, new BitmapDrawable(home.getResources(), bitmap), null, draggable,
                     position[0] - origin[0], position[1] - origin[1], appsView, item,
                     new Rect(0, 0, width, height), 1f, 1f, optionsType.getDeclaredConstructor().newInstance());
             if (!(Boolean) controller.getClass().getMethod("isDragging").invoke(controller)) {

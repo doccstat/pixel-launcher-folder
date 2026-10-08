@@ -17,6 +17,13 @@ import java.util.List;
 public final class FolderTests extends Instrumentation {
     private int checks;
     private String mode;
+    public interface FakeCloseable { void close(); }
+    public interface FakeDraggable {
+        int getViewType();
+        void getSourceVisualDragBounds(android.graphics.Rect rect);
+        void getWorkspaceVisualDragBounds(android.graphics.Rect rect);
+        FakeCloseable prepareDrawDragView();
+    }
     private static class FakeItem {
         private final android.os.UserHandle user;
         FakeItem(android.os.UserHandle user) { this.user = user; }
@@ -101,6 +108,19 @@ public final class FolderTests extends Instrumentation {
             check(LauncherDrag.findApp(store, new android.content.ComponentName("other", "other.Main"), personal) == null,
                     "Missing drag component is rejected");
             check(AppEntry.homeContext(context) == null, "Settings never gains native launcher drag access");
+            android.graphics.Rect originalBounds = new android.graphics.Rect(0, 0, 48, 48);
+            FakeDraggable source = (FakeDraggable) LauncherDrag.draggable(FakeDraggable.class, originalBounds);
+            check(source.getViewType() == 0, "Native controller gets a non-null draggable icon source");
+            originalBounds.setEmpty();
+            android.graphics.Rect sourceBounds = new android.graphics.Rect();
+            source.getSourceVisualDragBounds(sourceBounds);
+            check(sourceBounds.equals(new android.graphics.Rect(0, 0, 48, 48)), "Draggable captures source icon bounds");
+            source.getWorkspaceVisualDragBounds(sourceBounds);
+            check(sourceBounds.width() == 48, "Workspace drag bounds match the icon");
+            check(source.prepareDrawDragView() != null, "Drag draw preparation supplies a closeable");
+            source.prepareDrawDragView().close();
+            check(source.equals(source) && !source.equals(null) && source.hashCode() == System.identityHashCode(source),
+                    "Draggable proxy retains identity semantics");
             View dragLayer = new View(context) {
                 @Override public void getLocationOnScreen(int[] position) { position[0] = 25; position[1] = 50; }
             };
