@@ -93,10 +93,12 @@ jobs:
           - Sorts folder apps and previews alphabetically.
           - Supports user-visible backup and restore.
           - Preserves Android profile identity without modifying installed apps.
+          - Uses the native Home and WM Shell activity-drag paths.
 
           Tested on Pixel 11 Pro Fold, Android 17, Pixel Launcher 17.
           Android 15+ and rooted Pixel Launcher devices are required. Other
-          launcher versions are unverified. App dragging remains experimental.
+          launcher versions are unverified. Home shortcut, split-screen,
+          pop-up, and bubble-target dragging remain experimental.
 
           The APK is signed with the permanent release key; its SHA-256 checksum
           is included with this release.

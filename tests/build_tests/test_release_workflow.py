@@ -26,7 +26,7 @@ def step_script(prefix):
 
 
 def release(code, draft=False, author="github-actions[bot]", prerelease=False):
-    name = f"0.2.0-build.{code}" if code > 2 else "0.2.0"
+    name = f"0.3.0-build.{code}" if code > 3 else "0.3.0"
     return dict(id=code, tag_name=f"{code}-{name}", name=name, draft=draft,
                 prerelease=prerelease, author=dict(login=author))
 
@@ -86,7 +86,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
-    def prepare_distribution(self, code=2, prerelease=False):
+    def prepare_distribution(self, code=3, prerelease=False):
         self.tag = release(code)["tag_name"]
         for name, value in (("release-tag", self.tag), ("release-prerelease", str(prerelease).lower()),
                             ("release-title", "title"), ("release-notes.md", "notes")):
@@ -97,23 +97,23 @@ class ReleaseWorkflowTests(unittest.TestCase):
             (verified / name).write_text("same")
 
     def test_manual_selects_newest_draft_not_old_publication(self):
-        draft = release(200008, draft=True, prerelease=True)
-        result = self.run_step("Resolve", dict(pages=[[release(2)], [draft]],
+        draft = release(300008, draft=True, prerelease=True)
+        result = self.run_step("Resolve", dict(pages=[[release(3)], [draft]],
             view=dict(isDraft=True, isPrerelease=True, name=draft['name'], body="notes")))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.directory / "release-tag").read_text().strip(), draft['tag_name'])
 
     def test_manual_ignores_unrelated_drafts(self):
         other = release(900000, draft=True, author="someone")
-        result = self.run_step("Resolve", dict(pages=[[release(2), other]],
-            view=dict(isDraft=False, isPrerelease=False, name="0.2.0", body="notes")))
+        result = self.run_step("Resolve", dict(pages=[[release(3), other]],
+            view=dict(isDraft=False, isPrerelease=False, name="0.3.0", body="notes")))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.directory / "release-tag").read_text().strip(), "2-0.2.0")
+        self.assertEqual((self.directory / "release-tag").read_text().strip(), "3-0.3.0")
 
     def test_publication_event_uses_exact_tag(self):
-        self.env['REQUESTED_TAG'] = "2-0.2.0"
+        self.env['REQUESTED_TAG'] = "3-0.3.0"
         result = self.run_step("Resolve", dict(view=dict(isDraft=False, isPrerelease=False,
-                                                        name="0.2.0", body="notes")))
+                                                        name="0.3.0", body="notes")))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any(c[0] == 'api' for c in self.calls()))
 
@@ -122,7 +122,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
 
     def test_manual_publishes_candidate_stable(self):
-        self.prepare_distribution(200008)
+        self.prepare_distribution(300008)
         (self.directory / "release-draft").write_text("true\n")
         result = self.run_step("Publish the verified", {})
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -131,7 +131,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_stable_listing_retry_repairs_status_without_asset_overwrite(self):
         self.prepare_distribution()
-        result = self.run_step("Create or repair", dict(pages=[[release(2, prerelease=True)]]))
+        result = self.run_step("Create or repair", dict(pages=[[release(3, prerelease=True)]]))
         self.assertEqual(result.returncode, 0, result.stderr)
         patch = next(c for c in self.calls() if '--method' in c)
         self.assertIn('prerelease=false', patch)
@@ -141,13 +141,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_changed_listing_apk_is_not_replaced(self):
         self.prepare_distribution()
-        result = self.run_step("Create or repair", dict(pages=[[release(2)]], binary="different"))
+        result = self.run_step("Create or repair", dict(pages=[[release(3)]], binary="different"))
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any('--method' in c for c in self.calls()))
 
     def test_older_release_cannot_make_listing_latest(self):
         self.prepare_distribution()
-        result = self.run_step("Create or repair", dict(pages=[[release(2), release(200009)]]))
+        result = self.run_step("Create or repair", dict(pages=[[release(3), release(300009)]]))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('refusing a rollback', result.stdout)
         self.assertEqual(len(self.calls()), 1)
@@ -159,7 +159,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertFalse(any(c[:2] == ['release', 'create'] for c in self.calls()))
 
     def test_new_listing_release_is_stable(self):
-        self.prepare_distribution(200008)
+        self.prepare_distribution(300008)
         result = self.run_step("Create or repair", dict(pages=[[]]))
         self.assertEqual(result.returncode, 0, result.stderr)
         create = next(c for c in self.calls() if c[:2] == ['release', 'create'])
@@ -167,26 +167,26 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn('--prerelease', create)
 
     def test_explicit_source_prerelease_is_preserved(self):
-        self.prepare_distribution(200008, prerelease=True)
+        self.prepare_distribution(300008, prerelease=True)
         result = self.run_step("Create or repair", dict(pages=[[]]))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('--prerelease', self.calls()[-1])
 
     def test_cleanup_preserves_newer_and_unrelated_drafts(self):
-        self.prepare_distribution(200008)
-        old = release(200007, draft=True)
-        pages = [[old, release(200009, draft=True), release(200006, draft=True, author='someone'),
-                  release(200005)]]
+        self.prepare_distribution(300008)
+        old = release(300007, draft=True)
+        pages = [[old, release(300009, draft=True), release(300006, draft=True, author='someone'),
+                  release(300005)]]
         result = self.run_step("Remove superseded", dict(pages=pages, current=old))
         self.assertEqual(result.returncode, 0, result.stderr)
         deletes = [c for c in self.calls() if 'DELETE' in c]
         self.assertEqual(len(deletes), 1)
-        self.assertTrue(deletes[0][1].endswith('/200007'))
+        self.assertTrue(deletes[0][1].endswith('/300007'))
 
     def test_cleanup_rechecks_publication_before_deleting(self):
-        self.prepare_distribution(200008)
-        result = self.run_step("Remove superseded", dict(pages=[[release(200007, draft=True)]],
-                                                        current=release(200007)))
+        self.prepare_distribution(300008)
+        result = self.run_step("Remove superseded", dict(pages=[[release(300007, draft=True)]],
+                                                        current=release(300007)))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any('DELETE' in c for c in self.calls()))
 

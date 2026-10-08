@@ -8,7 +8,7 @@ folders to the Pixel Launcher app drawer.
 - Create and arrange folders as normal app-drawer cells.
 - Sort folder contents and four-icon previews alphabetically.
 - Optionally keep folder apps out of the main alphabetical app list.
-- Tap to launch an app; long-press to start the launcher drag flow.
+- Tap to launch an app; long-press to create a Home shortcut or start a native WM Shell drag.
 - Back up and restore assignments through Android's user-selected Files storage.
 - Preserve Android profile identity while excluding Private Space.
 
@@ -22,8 +22,9 @@ read Private Space. It requires no Internet permission.
 - Pixel Launcher package `com.google.android.apps.nexuslauncher`.
 
 The maintained test target is Pixel 11 Pro Fold, Android 17, Pixel Launcher 17.
-Other launcher versions are unverified. Split-screen and pop-up dragging remain
-experimental; disable the module's launcher scope if an update causes problems.
+Other launcher versions are unverified. Home shortcut, split-screen, pop-up,
+and bubble-target dragging remain experimental; disable the module's launcher
+scope if an update causes problems.
 
 ## Installation
 
