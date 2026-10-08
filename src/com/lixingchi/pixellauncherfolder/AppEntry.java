@@ -36,12 +36,31 @@ final class AppEntry {
     }
     static void launch(Context context, String key) { launch(context, key, "personal", -1); }
 
-    /** Starts the same global Android drag payload Pixel Launcher uses for app cells. */
+    /** Floating taskbar drawers use WM Shell; Home drawers need the workspace controller. */
+    static Context homeContext(Context context) {
+        if (!Folders.LAUNCHER.equals(context.getPackageName())) return null;
+        try {
+            ClassLoader loader = context.getClassLoader();
+            Class<?> launcher = Class.forName("com.android.launcher3.Launcher", false, loader);
+            Class<?> activityContext = Class.forName("com.android.launcher3.views.ActivityContext", false, loader);
+            java.lang.reflect.Method lookup = activityContext.getDeclaredMethod("lookupContextNoThrow", Context.class);
+            lookup.setAccessible(true);
+            Object resolved = lookup.invoke(null, context);
+            return launcher.isInstance(resolved) ? (Context) resolved : null;
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("Unsupported launcher", error);
+        }
+    }
+
+    /** Starts a global activity drag ONLY in the floating taskbar drawer. */
     static boolean startDrag(Context context, View source, String key, String kind, long serial) {
         Profiles profile = Profiles.resolve(context, kind, serial);
         ComponentName component = ComponentName.unflattenFromString(key);
         if (component == null || !profile.usable(context)) return false;
         LauncherApps launcher = context.getSystemService(LauncherApps.class);
+        // Home gestures are bridged by FolderRow. Never silently fall back to
+        // a Shell-only drag after a failed native Home drag.
+        if (homeContext(context) != null) return false;
         // These are framework system APIs available to the scoped launcher,
         // not the SDK settings app. Never synthesize a Personal-user intent
         // for a Work app or fall back to a full-screen launch on drag failure.
