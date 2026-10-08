@@ -17,6 +17,16 @@ import java.util.List;
 public final class FolderTests extends Instrumentation {
     private int checks;
     private String mode;
+    private static class FakeItem {
+        private final android.os.UserHandle user;
+        FakeItem(android.os.UserHandle user) { this.user = user; }
+    }
+    private static final class FakeApp extends FakeItem {
+        private final android.content.ComponentName componentName;
+        FakeApp(android.content.ComponentName component, android.os.UserHandle user) {
+            super(user); componentName = component;
+        }
+    }
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         mode = arguments == null ? null : arguments.getString("mode");
@@ -79,6 +89,31 @@ public final class FolderTests extends Instrumentation {
             check(clip.getDescription().hasMimeType("application/vnd.android.activity"), "Shell activity drag MIME type");
             check(android.os.Process.myUserHandle().equals(clip.getItemAt(0).getIntent().getParcelableExtra(android.content.Intent.EXTRA_USER)),
                     "Drag payload preserves exact user");
+            android.content.ComponentName dragComponent = new android.content.ComponentName("example", "example.Main");
+            android.os.UserHandle personal = android.os.Process.myUserHandle();
+            android.os.UserHandle work = android.os.UserHandle.getUserHandleForUid(1000000);
+            FakeApp personalApp = new FakeApp(dragComponent, personal), workApp = new FakeApp(dragComponent, work);
+            Object[] store = {personalApp, workApp};
+            check(LauncherDrag.findApp(store, dragComponent, personal) == personalApp, "Home drag selects exact Personal app");
+            check(LauncherDrag.findApp(store, dragComponent, work) == workApp, "Home drag selects exact Work app");
+            check(LauncherDrag.findApp(new Object[]{personalApp}, dragComponent, work) == null,
+                    "Missing Work app never falls back to Personal");
+            check(LauncherDrag.findApp(store, new android.content.ComponentName("other", "other.Main"), personal) == null,
+                    "Missing drag component is rejected");
+            check(AppEntry.homeContext(context) == null, "Settings never gains native launcher drag access");
+            View dragLayer = new View(context) {
+                @Override public void getLocationOnScreen(int[] position) { position[0] = 25; position[1] = 50; }
+            };
+            android.view.MotionEvent motion = android.view.MotionEvent.obtain(10, 20,
+                    android.view.MotionEvent.ACTION_UP, 300, 400, 0);
+            motion.offsetLocation(-200, -300); // Popup-local (100,100), raw screen (300,400).
+            android.view.MotionEvent translated = LauncherDrag.inLayer(motion, dragLayer);
+            try {
+                check(translated.getX() == 275 && translated.getY() == 350, "Popup gesture maps into DragLayer coordinates");
+                check(translated.getActionMasked() == android.view.MotionEvent.ACTION_UP, "Finger-up is forwarded for dropping");
+                check(translated.getDownTime() == motion.getDownTime(), "Drag gesture timing is preserved");
+                check(motion.getX() == 100 && motion.getY() == 100, "Forwarding does not mutate popup input");
+            } finally { translated.recycle(); motion.recycle(); }
             reject("{\"version\":2,\"folders\":[]}"); reject("{}"); reject("not-json");
             List<Folders.Folder> list = new ArrayList<>();
             list.add(Folders.Folder.create(" Test ", Arrays.asList(Folders.PACKAGE + "/.MainActivity", Folders.PACKAGE + "/.MainActivity")));

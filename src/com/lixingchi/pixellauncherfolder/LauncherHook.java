@@ -70,7 +70,7 @@ public final class LauncherHook implements IXposedHookLoadPackage {
             // Resolve fields before any hook becomes active. Unsupported builds fail closed.
             for (String name : new String[]{"mAdapterItems", "mApps", "mSearchResults", "mFastScrollerSections"}) field(model, name);
             field(base, "mApps"); field(item, "viewType"); field(bind.getParameterTypes()[0], "itemView");
-            field(base, "mAppsPerRow");
+            field(base, "mAppsPerRow"); field(base, "mActivityContext");
             Class<?> gridAdapter = Class.forName(ROOT + "AllAppsGridAdapter", false, cl);
             Field layoutManager = field(gridAdapter, "mGridLayoutMgr");
             field(layoutManager.getType(), "mSpanCount");
@@ -97,6 +97,7 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                     } catch (Throwable error) { log(error); }
                     FolderRow row = new FolderRow(parent.getContext(), "personal", -1, true, true,
                             stockIconSize, stockTextSize, stockDrawablePadding, stockTypeface);
+                    row.bindDrawerContext((Context) get(p.thisObject, "mActivityContext"));
                     row.setLayoutParams(new ViewGroup.LayoutParams(-1, row.expectedHeight()));
                     Object result;
                     if (holderConstructor != null) result = holderConstructor.newInstance(row);

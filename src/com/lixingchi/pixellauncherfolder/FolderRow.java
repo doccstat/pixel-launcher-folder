@@ -46,6 +46,9 @@ final class FolderRow extends FrameLayout {
     private int generation;
     private int folderIndex = -1;
     private PopupWindow folderPopup;
+    private LauncherDrag homeDrag;
+    private Context drawerContext;
+    private float downX, downY;
     private final ContentObserver observer = new ContentObserver(main) {
         @Override public void onChange(boolean self) { refresh(); }
     };
@@ -100,6 +103,8 @@ final class FolderRow extends FrameLayout {
     }
 
     void bindFolderIndex(int index) { folderIndex = index; refresh(); }
+
+    void bindDrawerContext(Context context) { drawerContext = context; }
 
     void bindProfile(String kind, long profileSerial) {
         if (!profile.equals(kind) || serial != profileSerial) {
@@ -246,8 +251,27 @@ final class FolderRow extends FrameLayout {
     }
 
     private void dismissFolderPopup() {
+        LauncherDrag drag = homeDrag; homeDrag = null;
+        if (drag != null) drag.cancel();
         PopupWindow popup = folderPopup; folderPopup = null;
         if (popup != null) popup.dismiss();
+    }
+
+    private boolean forwardHomeDrag(android.view.MotionEvent event) {
+        if (homeDrag == null) return false;
+        int action = event.getActionMasked();
+        try {
+            if (action == android.view.MotionEvent.ACTION_CANCEL) homeDrag.cancel();
+            else homeDrag.move(event);
+        } catch (RuntimeException error) {
+            android.util.Log.e("PixelLauncherFolders", "Home drag gesture failed", error);
+            dismissFolderPopup(); return true;
+        }
+        if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) {
+            homeDrag = null; // UP already completed the drop; do not cancel its animation.
+            dismissFolderPopup();
+        }
+        return true;
     }
 
     private void open(Folders.Folder folder, View anchor) {
@@ -280,11 +304,33 @@ final class FolderRow extends FrameLayout {
                 try { AppEntry.launch(context, key, folder.profile, folder.serial); dismissFolderPopup(); }
                 catch (RuntimeException error) { Toast.makeText(context, "This app is unavailable", Toast.LENGTH_SHORT).show(); }
             });
+            item.setOnTouchListener((v, event) -> {
+                if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                    downX = event.getRawX(); downY = event.getRawY();
+                }
+                return false;
+            });
             item.setOnLongClickListener(v -> {
                 try {
-                    if (AppEntry.startDrag(context, v, key, folder.profile, folder.serial)) dismissFolderPopup();
-                    else Toast.makeText(context, "App dragging is unavailable here", Toast.LENGTH_SHORT).show();
-                } catch (RuntimeException error) { Toast.makeText(context, "App dragging is unavailable on this launcher build", Toast.LENGTH_SHORT).show(); }
+                    Context home = AppEntry.homeContext(drawerContext != null ? drawerContext : context);
+                    if (home != null) {
+                        homeDrag = LauncherDrag.start(home, icon, key, folder.profile, folder.serial, downX, downY);
+                        if (homeDrag != null) {
+                            // Keep the source window until finger-up. Dismissing a PopupWindow
+                            // mid-gesture loses MOVE/UP; make it invisible and forward the
+                            // remaining gesture to the native controller instead.
+                            panel.setAlpha(0f);
+                            item.getParent().requestDisallowInterceptTouchEvent(true);
+                            return true;
+                        }
+                    } else if (AppEntry.startDrag(context, icon, key, folder.profile, folder.serial)) {
+                        dismissFolderPopup(); return true;
+                    }
+                    Toast.makeText(context, "App dragging is unavailable here", Toast.LENGTH_SHORT).show();
+                } catch (RuntimeException error) {
+                    android.util.Log.e("PixelLauncherFolders", "Could not start app drag", error);
+                    Toast.makeText(context, "App dragging is unavailable on this launcher build", Toast.LENGTH_SHORT).show();
+                }
                 return true; // A failed drag must never turn into an ordinary launch.
             });
             GridLayout.LayoutParams params = new GridLayout.LayoutParams(GridLayout.spec(i / columns), GridLayout.spec(i % columns, 1, GridLayout.FILL, 1f));
@@ -301,7 +347,8 @@ final class FolderRow extends FrameLayout {
         PopupWindow popup = new PopupWindow(panel, width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         popup.setOutsideTouchable(true); popup.setClippingEnabled(true); popup.setElevation(Ui.dp(context, 8));
-        popup.setOnDismissListener(() -> { if (folderPopup == popup) folderPopup = null; });
+        popup.setTouchInterceptor((v, event) -> forwardHomeDrag(event));
+        popup.setOnDismissListener(() -> { if (folderPopup == popup) dismissFolderPopup(); });
         // A floating taskbar drawer has a window context, not an Activity.
         // Attach to the existing drawer token instead of creating a dialog.
         try { folderPopup = popup; popup.showAtLocation(anchor, Gravity.CENTER, 0, 0); }
