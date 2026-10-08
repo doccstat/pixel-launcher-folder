@@ -344,10 +344,28 @@ final class FolderRow extends FrameLayout {
         LinearLayout actions = new LinearLayout(context); actions.setGravity(Gravity.END);
         actions.addView(Ui.textButton(context, "Edit folders", () -> { dismissFolderPopup(); settings(); }));
         actions.addView(Ui.textButton(context, "Close", this::dismissFolderPopup)); panel.addView(actions);
-        PopupWindow popup = new PopupWindow(panel, width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        // Use a full-screen popup window so the native launcher drag continues
+        // receiving MOVE/UP events after the finger leaves the panel. A normal
+        // content-sized PopupWindow treats that first move as an outside touch
+        // and dismisses the folder before the DragController can drop.
+        FrameLayout popupRoot = new FrameLayout(context);
+        popupRoot.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        popupRoot.addView(panel, new FrameLayout.LayoutParams(width,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        PopupWindow popup = new PopupWindow(popupRoot, android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, true);
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
-        popup.setOutsideTouchable(true); popup.setClippingEnabled(true); popup.setElevation(Ui.dp(context, 8));
-        popup.setTouchInterceptor((v, event) -> forwardHomeDrag(event));
+        popup.setOutsideTouchable(false); popup.setClippingEnabled(true); popup.setElevation(Ui.dp(context, 8));
+        popup.setTouchInterceptor((v, event) -> {
+            if (homeDrag != null) return forwardHomeDrag(event);
+            if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                int[] location = new int[2]; panel.getLocationOnScreen(location);
+                boolean inside = event.getRawX() >= location[0] && event.getRawX() < location[0] + panel.getWidth()
+                        && event.getRawY() >= location[1] && event.getRawY() < location[1] + panel.getHeight();
+                if (!inside) { dismissFolderPopup(); return true; }
+            }
+            return false;
+        });
         popup.setOnDismissListener(() -> { if (folderPopup == popup) dismissFolderPopup(); });
         // A floating taskbar drawer has a window context, not an Activity.
         // Attach to the existing drawer token instead of creating a dialog.
