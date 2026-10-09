@@ -7,14 +7,16 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/distribute-release.yml"
+RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
 
 
-def step_script(prefix):
+def step_script(prefix, workflow=WORKFLOW):
     # Avoid a PyYAML dependency in the Android signing runner's build guards.
-    block = next(b for b in WORKFLOW.read_text().split("      - name: ")[1:]
+    block = next(b for b in workflow.read_text().split("      - name: ")[1:]
                  if b.startswith(prefix))
     lines = block.split("        run: |\n", 1)[1].splitlines()
     script = []
@@ -25,38 +27,40 @@ def step_script(prefix):
     return "\n".join(script) + "\n"
 
 
-def release(code, draft=False, author="github-actions[bot]", prerelease=False):
-    name = f"0.3.0-build.{code}" if code > 3 else "0.3.0"
-    return dict(id=code, tag_name=f"{code}-{name}", name=name, draft=draft,
-                prerelease=prerelease, author=dict(login=author))
+def release(code=3, name=None, draft=False, author="github-actions[bot]", prerelease=False):
+    name = name or f"0.{code}.0"
+    return dict(id=code, tag_name=f"{code}-{name}", name=name, body="release notes",
+                draft=draft, prerelease=prerelease, author=dict(login=author))
 
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
-p = pathlib.Path(os.environ['FAKE_DATA'])
-data = json.loads(p.read_text())
+data = json.loads(pathlib.Path(os.environ['FAKE_DATA']).read_text())
 with open(os.environ['FAKE_LOG'], 'a') as log:
     log.write(json.dumps(args) + '\n')
-if data.get('api_failure') and args[0] == 'api':
+if data.get('fail_command') == args[:2]:
     sys.exit(1)
 if args[:2] == ['api', '--paginate']:
+    if data.get('api_failure'):
+        sys.exit(1)
     print(json.dumps(data.get('pages', [[]])))
 elif args[0] == 'api':
-    if '--method' in args:
+    endpoint = args[1]
+    if endpoint.endswith('/commits/main'):
+        print(data.get('head', os.environ['GITHUB_SHA']))
+    elif endpoint.endswith('/releases/latest'):
+        if not data.get('latest'):
+            sys.exit(1)
+        print(json.dumps(data['latest']))
+    elif '--method' in args:
         print('{}')
+    elif '/releases/' in endpoint:
+        print(json.dumps(data['current'][endpoint.rsplit('/', 1)[1]]))
     else:
-        print(json.dumps(data.get('current', {})))
-elif args[:2] == ['release', 'view']:
-    if '--jq' in args:
-        print('99')
-    else:
-        print(json.dumps(data.get('view', {})))
-elif args[:2] == ['release', 'download']:
-    name = args[args.index('--pattern') + 1]
-    directory = pathlib.Path(args[args.index('--dir') + 1])
-    (directory / name).write_text(data.get('binary', 'same'))
-elif args[:2] not in (['release', 'edit'], ['release', 'create']):
+        sys.exit('Unexpected API call: ' + repr(args))
+elif args[:2] not in (['release', 'edit'], ['release', 'create'], ['release', 'upload'],
+                     ['workflow', 'run']):
     sys.exit('Unexpected gh command: ' + repr(args))
 '''
 
@@ -74,126 +78,173 @@ class ReleaseWorkflowTests(unittest.TestCase):
         cli.chmod(0o700)
         self.env = dict(os.environ, PATH=f"{self.directory}:{os.environ['PATH']}",
                         RUNNER_TEMP=str(self.directory), FAKE_DATA=str(self.data),
-                        FAKE_LOG=str(self.log), REQUESTED_TAG="",
+                        FAKE_LOG=str(self.log), GITHUB_SHA="a" * 40,
                         GITHUB_REPOSITORY="doccstat/pixel-launcher-folder",
                         LISTING_REPOSITORY="Xposed-Modules-Repo/com.lixingchi.pixellauncherfolder")
-
-    def run_step(self, prefix, data):
-        self.data.write_text(json.dumps(data))
-        return subprocess.run(["bash", "-c", step_script(prefix)], env=self.env,
-                              capture_output=True, text=True)
-
-    def calls(self):
-        return [json.loads(line) for line in self.log.read_text().splitlines()]
-
-    def prepare_distribution(self, code=3, prerelease=False):
-        self.tag = release(code)["tag_name"]
-        for name, value in (("release-tag", self.tag), ("release-prerelease", str(prerelease).lower()),
-                            ("release-title", "title"), ("release-notes.md", "notes")):
+        self.manifest = (ROOT / "AndroidManifest.xml").read_bytes()
+        (self.directory / "AndroidManifest.xml").write_bytes(self.manifest)
+        attrs = ET.fromstring(self.manifest).attrib
+        android = "{http://schemas.android.com/apk/res/android}"
+        self.source = release(int(attrs[android + "versionCode"]), attrs[android + "versionName"])
+        self.tag = self.source['tag_name']
+        for directory in ("dist", "verified-release"):
+            assets = self.directory / directory
+            assets.mkdir()
+            for name in ("PixelLauncherFolders.apk", "PixelLauncherFolders.apk.sha256"):
+                (assets / name).write_text("new build")
+        for name, value in (("release-tag", self.tag), ("release-title", self.source['name']),
+                            ("release-notes.md", "notes")):
             (self.directory / name).write_text(value + "\n")
-        verified = self.directory / "verified-release"
-        verified.mkdir()
-        for name in ("PixelLauncherFolders.apk", "PixelLauncherFolders.apk.sha256"):
-            (verified / name).write_text("same")
 
-    def test_manual_selects_newest_draft_not_old_publication(self):
-        draft = release(300008, draft=True, prerelease=True)
-        result = self.run_step("Resolve", dict(pages=[[release(3)], [draft]],
-            view=dict(isDraft=True, isPrerelease=True, name=draft['name'], body="notes")))
+    def run_step(self, prefix, data, workflow=WORKFLOW):
+        self.data.write_text(json.dumps(data))
+        self.log.write_text("")
+        return subprocess.run(["bash", "-c", step_script(prefix, workflow)], env=self.env,
+                              cwd=self.directory, capture_output=True, text=True)
+
+    def calls(self, *prefix):
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        return [call for call in calls if call[:len(prefix)] == list(prefix)]
+
+    def test_source_creates_manifest_version_without_mutating_it(self):
+        result = self.run_step("Replace", {}, RELEASE_WORKFLOW)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.directory / "release-tag").read_text().strip(), draft['tag_name'])
+        create, = self.calls('release', 'create')
+        self.assertEqual(create[2], self.tag)
+        self.assertIn('--latest', create)
+        self.assertNotIn('--draft', create)
+        self.assertNotIn('--prerelease', create)
+        self.assertEqual(create[create.index('--target') + 1], self.env['GITHUB_SHA'])
+        self.assertEqual((self.directory / 'AndroidManifest.xml').read_bytes(), self.manifest)
+        self.assertEqual(len(self.calls('workflow', 'run')), 1)
 
-    def test_manual_ignores_unrelated_drafts(self):
-        other = release(900000, draft=True, author="someone")
-        result = self.run_step("Resolve", dict(pages=[[release(3), other]],
-            view=dict(isDraft=False, isPrerelease=False, name="0.3.0", body="notes")))
+    def test_source_same_version_replaces_assets_and_updates_tag(self):
+        result = self.run_step("Replace", dict(pages=[[self.source]]), RELEASE_WORKFLOW)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.directory / "release-tag").read_text().strip(), "3-0.3.0")
+        upload, = self.calls('release', 'upload')
+        self.assertEqual(upload[2], self.tag)
+        self.assertIn('--clobber', upload)
+        edit, = self.calls('release', 'edit')
+        self.assertEqual(edit[2], self.tag)
+        self.assertIn('--draft=false', edit)
+        self.assertIn('--prerelease=false', edit)
+        self.assertIn('--latest', edit)
+        patch, = [c for c in self.calls('api') if 'PATCH' in c]
+        self.assertTrue(patch[1].endswith('/git/refs/tags/' + self.tag))
+        self.assertIn('sha=' + self.env['GITHUB_SHA'], patch)
+        self.assertFalse(self.calls('release', 'create'))
+        self.assertEqual((self.directory / 'AndroidManifest.xml').read_bytes(), self.manifest)
+        self.assertEqual(len(self.calls('workflow', 'run')), 1)
 
-    def test_publication_event_uses_exact_tag(self):
-        self.env['REQUESTED_TAG'] = "3-0.3.0"
-        result = self.run_step("Resolve", dict(view=dict(isDraft=False, isPrerelease=False,
-                                                        name="0.3.0", body="notes")))
+    def test_superseded_source_run_cannot_overwrite_newer_assets(self):
+        result = self.run_step("Replace", dict(head="b" * 40), RELEASE_WORKFLOW)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(any(c[0] == 'api' for c in self.calls()))
-
-    def test_empty_source_fails_without_falling_back(self):
-        result = self.run_step("Resolve", dict(pages=[[]]))
-        self.assertNotEqual(result.returncode, 0)
-
-    def test_manual_publishes_candidate_stable(self):
-        self.prepare_distribution(300008)
-        (self.directory / "release-draft").write_text("true\n")
-        result = self.run_step("Publish the verified", {})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('--draft=false', self.calls()[0])
-        self.assertIn('--prerelease=false', self.calls()[0])
-
-    def test_stable_listing_retry_repairs_status_without_asset_overwrite(self):
-        self.prepare_distribution()
-        result = self.run_step("Create or repair", dict(pages=[[release(3, prerelease=True)]]))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        patch = next(c for c in self.calls() if '--method' in c)
-        self.assertIn('prerelease=false', patch)
-        self.assertIn('make_latest=true', patch)
-        self.assertNotIn('--clobber', str(self.calls()))
-        self.assertFalse(any(c[:2] == ['release', 'upload'] for c in self.calls()))
-
-    def test_changed_listing_apk_is_not_replaced(self):
-        self.prepare_distribution()
-        result = self.run_step("Create or repair", dict(pages=[[release(3)]], binary="different"))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any('--method' in c for c in self.calls()))
-
-    def test_older_release_cannot_make_listing_latest(self):
-        self.prepare_distribution()
-        result = self.run_step("Create or repair", dict(pages=[[release(3), release(300009)]]))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('refusing a rollback', result.stdout)
         self.assertEqual(len(self.calls()), 1)
 
-    def test_listing_api_error_is_not_treated_as_missing_release(self):
-        self.prepare_distribution()
-        result = self.run_step("Create or repair", dict(api_failure=True))
+    def test_source_api_error_does_not_create_release(self):
+        for failure in (dict(api_failure=True), dict(fail_command=[
+                'api', 'repos/doccstat/pixel-launcher-folder/commits/main'])):
+            with self.subTest(failure=failure):
+                result = self.run_step("Replace", failure, RELEASE_WORKFLOW)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.calls('release'))
+                self.assertFalse(self.calls('workflow'))
+
+    def test_source_upload_failure_does_not_dispatch_or_delete_drafts(self):
+        result = self.run_step("Replace", dict(pages=[[self.source]],
+            fail_command=['release', 'upload']), RELEASE_WORKFLOW)
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(c[:2] == ['release', 'create'] for c in self.calls()))
-
-    def test_new_listing_release_is_stable(self):
-        self.prepare_distribution(300008)
-        result = self.run_step("Create or repair", dict(pages=[[]]))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        create = next(c for c in self.calls() if c[:2] == ['release', 'create'])
-        self.assertEqual(create[2], self.tag)
-        self.assertNotIn('--prerelease', create)
-
-    def test_explicit_source_prerelease_is_preserved(self):
-        self.prepare_distribution(300008, prerelease=True)
-        result = self.run_step("Create or repair", dict(pages=[[]]))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('--prerelease', self.calls()[-1])
-
-    def test_cleanup_preserves_newer_and_unrelated_drafts(self):
-        self.prepare_distribution(300008)
-        old = release(300007, draft=True)
-        pages = [[old, release(300009, draft=True), release(300006, draft=True, author='someone'),
-                  release(300005)]]
-        result = self.run_step("Remove superseded", dict(pages=pages, current=old))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        deletes = [c for c in self.calls() if 'DELETE' in c]
-        self.assertEqual(len(deletes), 1)
-        self.assertTrue(deletes[0][1].endswith('/300007'))
-
-    def test_cleanup_rechecks_publication_before_deleting(self):
-        self.prepare_distribution(300008)
-        result = self.run_step("Remove superseded", dict(pages=[[release(300007, draft=True)]],
-                                                        current=release(300007)))
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.calls('workflow'))
         self.assertFalse(any('DELETE' in c for c in self.calls()))
 
+    def test_cleanup_only_removes_legacy_bot_drafts_after_publication(self):
+        old = release(300012, '0.3.0-build.12', draft=True)
+        other = release(300013, '0.3.0-build.13', draft=True, author='someone')
+        published = release(300011, '0.3.0-build.11')
+        manual = release(4, draft=True)
+        result = self.run_step("Replace", dict(pages=[[old, published], [other, manual]],
+            current={str(old['id']): old}), RELEASE_WORKFLOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        delete, = [c for c in self.calls() if 'DELETE' in c]
+        self.assertTrue(delete[1].endswith('/' + str(old['id'])))
+        self.assertLess(self.calls().index(self.calls('release', 'create')[0]),
+                        self.calls().index(delete))
+
+    def test_cleanup_rechecks_draft_before_deleting(self):
+        old = release(300012, '0.3.0-build.12', draft=True)
+        for current in (dict(old, draft=False), dict(old, name='manually renamed')):
+            with self.subTest(current=current):
+                result = self.run_step("Replace", dict(pages=[[old]],
+                    current={str(old['id']): current}), RELEASE_WORKFLOW)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(any('DELETE' in c for c in self.calls()))
+
+    def test_distribution_uses_github_latest_even_for_stale_events(self):
+        self.env['REQUESTED_TAG'] = '2-0.2.0'
+        result = self.run_step("Resolve", dict(latest=self.source,
+            pages=[[release(300012, '0.3.0-build.12')]]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.directory / 'release-tag').read_text().strip(), self.tag)
+        self.assertEqual(self.calls(), [['api',
+            'repos/doccstat/pixel-launcher-folder/releases/latest']])
+
+    def test_no_latest_release_fails_without_falling_back(self):
+        result = self.run_step("Resolve", {})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_distribution_rejects_drafts_prereleases_and_invalid_tags(self):
+        for changes in (dict(draft=True), dict(prerelease=True), dict(tag_name='invalid')):
+            with self.subTest(changes=changes):
+                result = self.run_step("Resolve", dict(latest=dict(self.source, **changes)))
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_existing_listing_release_is_replaced_and_stabilized(self):
+        result = self.run_step("Create or repair", dict(pages=[[dict(self.source, prerelease=True)]]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        upload, = self.calls('release', 'upload')
+        self.assertEqual(upload[2], self.tag)
+        self.assertIn('--clobber', upload)
+        self.assertTrue(all(str(self.directory / 'verified-release' / name) in upload
+            for name in ('PixelLauncherFolders.apk', 'PixelLauncherFolders.apk.sha256')))
+        edit, = self.calls('release', 'edit')
+        self.assertIn('--draft=false', edit)
+        self.assertIn('--prerelease=false', edit)
+        self.assertIn('--latest', edit)
+        self.assertFalse(self.calls('release', 'create'))
+
+    def test_new_listing_release_is_stable_despite_legacy_version_codes(self):
+        result = self.run_step("Create or repair", dict(pages=[[release(300009, '0.3.0-build.9')]]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        create, = self.calls('release', 'create')
+        self.assertEqual(create[2], self.tag)
+        self.assertIn('--latest', create)
+        self.assertNotIn('--prerelease', create)
+        self.assertNotIn('--draft', create)
+
+    def test_listing_api_error_is_not_treated_as_missing_release(self):
+        result = self.run_step("Create or repair", dict(api_failure=True))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.calls('release'))
+
+    def test_workflows_have_no_candidate_versioning_or_manual_tag_input(self):
+        workflow = RELEASE_WORKFLOW.read_text()
+        for retired in ('github.run_number', 'CANDIDATE_NUMBER', 'refresh-draft.py', 'root.set'):
+            self.assertNotIn(retired, workflow)
+        self.assertIn('actions: write', workflow)
+        self.assertIn('gh workflow run distribute-release.yml', workflow)
+        self.assertNotIn('inputs:', WORKFLOW.read_text())
+        for path in (WORKFLOW, RELEASE_WORKFLOW):
+            self.assertIn('group: signed-release\n  cancel-in-progress: false', path.read_text())
+
     def test_all_workflow_shell_blocks_parse(self):
-        for prefix in ('Resolve', 'Download', 'Publish the verified', 'Create or repair', 'Remove superseded'):
-            result = subprocess.run(['bash', '-n'], input=step_script(prefix), text=True, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
+        for workflow, prefixes in ((WORKFLOW, ('Resolve', 'Download', 'Create or repair')),
+                                   (RELEASE_WORKFLOW, ('Build with', 'Replace'))):
+            for prefix in prefixes:
+                with self.subTest(workflow=workflow.name, prefix=prefix):
+                    result = subprocess.run(['bash', '-n'], input=step_script(prefix, workflow),
+                                            text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == '__main__':
