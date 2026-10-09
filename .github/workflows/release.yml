@@ -1,7 +1,7 @@
-name: Signed release candidate
+name: Signed release
 
-# Every main push builds a uniquely versioned candidate. Only the newest
-# successful candidate remains as a draft; publishing it triggers LSPosed.
+# Every main push builds the manifest-declared version and replaces the matching
+# stable GitHub release. Distribution then mirrors that release to LSPosed.
 on:
   push:
     branches: [main]
@@ -22,6 +22,7 @@ jobs:
     environment: release
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -38,31 +39,6 @@ jobs:
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Validate build guards
         run: python3 -m unittest discover -s tests/build_tests -v
-      - name: Assign a unique candidate version for this commit
-        env:
-          CANDIDATE_NUMBER: ${{ github.run_number }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import xml.etree.ElementTree as ET
-          path = 'AndroidManifest.xml'
-          android = '{http://schemas.android.com/apk/res/android}'
-          ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
-          tree = ET.parse(path)
-          root = tree.getroot()
-          base_code = int(root.attrib[android + 'versionCode'])
-          base_name = root.attrib[android + 'versionName']
-          number = int(os.environ['CANDIDATE_NUMBER'])
-          code = base_code * 100000 + number
-          name = f'{base_name}-build.{number}'
-          if code > 2100000000:
-              raise ValueError('Candidate versionCode is outside the Android range')
-          root.set(android + 'versionCode', str(code))
-          root.set(android + 'versionName', name)
-          tree.write(path, encoding='utf-8', xml_declaration=True)
-          print(f'Candidate version: {code}-{name}')
-          PY
       - name: Build with the permanent key and verify the pinned certificate
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -78,11 +54,17 @@ jobs:
           test -n "$KEYSTORE_BASE64"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode >"$SIGNING_KEYSTORE"
           python3 build.py --release
-      - name: Create or refresh the newest signed draft candidate
+      - name: Replace the stable GitHub release for this version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # An old rerun must not overwrite a newer push's assets.
+          head_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo 'A newer main commit exists; skipping this superseded build.'
+            exit 0
+          fi
           version_code=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionCode"])')
           version_name=$(python3 -c 'import xml.etree.ElementTree as ET; r=ET.parse("AndroidManifest.xml").getroot(); print(r.attrib["{http://schemas.android.com/apk/res/android}versionName"])')
           tag="$version_code-$version_name"
@@ -103,4 +85,31 @@ jobs:
           The APK is signed with the permanent release key; its SHA-256 checksum
           is included with this release.
           EOF
-          python3 .github/scripts/refresh-draft.py "$tag" "$version_name" "$GITHUB_SHA"
+          releases=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          if jq -e --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length > 0' <<<"$releases" >/dev/null; then
+            gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" --method PATCH \
+              -f "sha=$GITHUB_SHA" -F force=true
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
+              dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$version_name" --notes-file dist/release-notes.md \
+              --draft=false --prerelease=false --latest
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$version_name" --notes-file dist/release-notes.md --latest \
+              dist/PixelLauncherFolders.apk dist/PixelLauncherFolders.apk.sha256
+          fi
+          # GITHUB_TOKEN release writes do not trigger release-event workflows.
+          gh workflow run distribute-release.yml --repo "$GITHUB_REPOSITORY" --ref main
+          # Retire only the old automation's drafts after the stable release exists.
+          jq -r '.[][] | select(.draft == true and .author.login == "github-actions[bot]" and
+            (.tag_name | test("^[1-9][0-9]*-.+-build\\.[1-9][0-9]*$")) and
+            .name == (.tag_name | sub("^[0-9]+-"; ""))) | .id' <<<"$releases" |
+            while read -r id; do
+              current=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id")
+              if jq -e '.draft == true and .author.login == "github-actions[bot]" and
+                  (.tag_name | test("^[1-9][0-9]*-.+-build\\.[1-9][0-9]*$")) and
+                  .name == (.tag_name | sub("^[0-9]+-"; ""))' <<<"$current" >/dev/null; then
+                gh api "repos/$GITHUB_REPOSITORY/releases/$id" --method DELETE
+              fi
+            done

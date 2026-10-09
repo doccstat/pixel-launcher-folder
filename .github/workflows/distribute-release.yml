@@ -1,15 +1,14 @@
-name: Distribute release
+name: Distribute latest release
 
 on:
   release:
     types: [published]
-  # Running this manually verifies and publishes the newest signed candidate.
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Serialize with signing so selected candidate assets cannot change mid-run.
+# Serialize with signing so source assets cannot change during verification.
 concurrency:
   group: signed-release
   cancel-in-progress: false
@@ -26,37 +25,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: release
-    permissions:
-      contents: write
     steps:
-      - name: Resolve the newest candidate or exact publication event
-        id: source_release
+      - name: Resolve the latest stable source release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REQUESTED_TAG: ${{ github.event.release.tag_name || '' }}
         run: |
           set -euo pipefail
-          tag="$REQUESTED_TAG"
-          if [ -z "$tag" ]; then
-            tag=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-              jq -r '[.[][] | select((.tag_name | test("^[1-9][0-9]*-.+$")) and
-                (.draft == false or (.author.login == "github-actions[bot]" and
-                  (.tag_name | test("^[1-9][0-9]*-.+-build\\.[1-9][0-9]*$")) and
-                  .name == (.tag_name | sub("^[0-9]+-"; ""))))) ] |
-                sort_by(.tag_name | split("-")[0] | tonumber) | last | .tag_name // empty')
-          fi
-          test -n "$tag"
+          # Always use GitHub Latest, even for delayed events or manual retries.
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest")
+          tag=$(jq -r .tag_name <<<"$release_json")
           [[ "$tag" =~ ^[1-9][0-9]*-.+$ ]]
-          release_json=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
-            --json isDraft,isPrerelease,name,body)
-          if [ -n "$REQUESTED_TAG" ]; then
-            test "$(jq -r .isDraft <<<"$release_json")" = false
-          fi
+          test "$(jq -r .draft <<<"$release_json")" = false
+          test "$(jq -r .prerelease <<<"$release_json")" = false
           printf '%s\n' "$tag" >"$RUNNER_TEMP/release-tag"
-          jq -r .isDraft <<<"$release_json" >"$RUNNER_TEMP/release-draft"
           jq -r .name <<<"$release_json" >"$RUNNER_TEMP/release-title"
           jq -r .body <<<"$release_json" >"$RUNNER_TEMP/release-notes.md"
-          jq -r .isPrerelease <<<"$release_json" >"$RUNNER_TEMP/release-prerelease"
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
@@ -103,18 +86,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/verified-release"
           cp "$tmp/PixelLauncherFolders.apk" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk"
           cp "$tmp/PixelLauncherFolders.apk.sha256" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk.sha256"
-      - name: Publish the verified source candidate
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ "$(cat "$RUNNER_TEMP/release-draft")" = true ]; then
-            # Manual Distribute is the explicit publication action. Publication
-            # by GITHUB_TOKEN does not recursively trigger this workflow.
-            gh release edit "$(cat "$RUNNER_TEMP/release-tag")" \
-              --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false
-            printf 'false\n' >"$RUNNER_TEMP/release-prerelease"
-          fi
       - name: Create or repair the matching listing release without changing its version
         env:
           GH_TOKEN: ${{ secrets.LSPOSED_RELEASE_TOKEN }}
@@ -122,52 +93,18 @@ jobs:
           set -euo pipefail
           repo="$LISTING_REPOSITORY"
           tag=$(cat "$RUNNER_TEMP/release-tag")
-          expected_prerelease=$(cat "$RUNNER_TEMP/release-prerelease")
           listing_releases=$(gh api --paginate --slurp "repos/$repo/releases?per_page=100")
-          code="${tag%%-*}"
-          if jq -e --argjson code "$code" '[.[][] | select(.draft == false and
-              (.tag_name | test("^[1-9][0-9]*-.+$")) and
-              (.tag_name | split("-")[0] | tonumber) > $code)] | length > 0' <<<"$listing_releases" >/dev/null; then
-            echo '::error::A newer listing release exists; refusing a rollback.'
-            exit 1
-          fi
           if jq -e --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length > 0' <<<"$listing_releases" >/dev/null; then
-            tmp=$(mktemp -d)
-            trap 'rm -rf "$tmp"' EXIT
-            gh release download "$tag" --repo "$repo" --pattern 'PixelLauncherFolders.apk' --dir "$tmp"
-            gh release download "$tag" --repo "$repo" --pattern 'PixelLauncherFolders.apk.sha256' --dir "$tmp"
-            cmp "$tmp/PixelLauncherFolders.apk" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk"
-            cmp "$tmp/PixelLauncherFolders.apk.sha256" "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk.sha256"
-            id=$(gh release view "$tag" --repo "$repo" --json databaseId --jq .databaseId)
-            gh api "repos/$repo/releases/$id" --method PATCH \
-              -F "prerelease=$expected_prerelease" -F draft=false \
-              -f "make_latest=$([ "$expected_prerelease" = true ] && echo false || echo true)" >/dev/null
-          else
-            args=(release create "$tag" --repo "$repo" \
+            gh release upload "$tag" --repo "$repo" --clobber \
+              "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk" \
+              "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk.sha256"
+            gh release edit "$tag" --repo "$repo" \
               --title "$(cat "$RUNNER_TEMP/release-title")" \
               --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --draft=false --prerelease=false --latest
+          else
+            gh release create "$tag" --repo "$repo" --title "$(cat "$RUNNER_TEMP/release-title")" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" --latest \
               "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk" \
-              "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk.sha256")
-            if [ "$expected_prerelease" = true ]; then args+=(--prerelease); fi
-            gh "${args[@]}"
+              "$RUNNER_TEMP/verified-release/PixelLauncherFolders.apk.sha256"
           fi
-      - name: Remove superseded bot-created source drafts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          selected=$(cat "$RUNNER_TEMP/release-tag")
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-            jq -r --argjson code "${selected%%-*}" '.[][] | select(.draft == true and
-              .author.login == "github-actions[bot]" and
-              (.tag_name | test("^[1-9][0-9]*-.+-build\\.[1-9][0-9]*$")) and
-              .name == (.tag_name | sub("^[0-9]+-"; "")) and
-              (.tag_name | split("-")[0] | tonumber) < $code) | .id' |
-            while read -r id; do
-              [ -n "$id" ] || continue
-              current=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id")
-              if jq -e '.draft == true and .author.login == "github-actions[bot]" and
-                  .name == (.tag_name | sub("^[0-9]+-"; ""))' <<<"$current" >/dev/null; then
-                gh api "repos/$GITHUB_REPOSITORY/releases/$id" --method DELETE
-              fi
-            done
