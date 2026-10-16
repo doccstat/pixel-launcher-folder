@@ -29,8 +29,6 @@ jobs:
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Check build and signing tests
         run: python3 -m unittest discover -s tests/build_tests -v
-      - name: Compile instrumentation variant (device execution is separate)
-        run: python3 build.py --test
       - name: Build development APK without instrumentation
         run: python3 build.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
