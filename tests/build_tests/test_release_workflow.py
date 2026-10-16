@@ -157,28 +157,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertFalse(self.calls('workflow'))
         self.assertFalse(any('DELETE' in c for c in self.calls()))
 
-    def test_cleanup_only_removes_legacy_bot_drafts_after_publication(self):
-        old = release(300012, '0.3.0-build.12', draft=True)
-        other = release(300013, '0.3.0-build.13', draft=True, author='someone')
-        published = release(300011, '0.3.0-build.11')
-        manual = release(4, draft=True)
-        result = self.run_step("Replace", dict(pages=[[old, published], [other, manual]],
-            current={str(old['id']): old}), RELEASE_WORKFLOW)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        delete, = [c for c in self.calls() if 'DELETE' in c]
-        self.assertTrue(delete[1].endswith('/' + str(old['id'])))
-        self.assertLess(self.calls().index(self.calls('release', 'create')[0]),
-                        self.calls().index(delete))
-
-    def test_cleanup_rechecks_draft_before_deleting(self):
-        old = release(300012, '0.3.0-build.12', draft=True)
-        for current in (dict(old, draft=False), dict(old, name='manually renamed')):
-            with self.subTest(current=current):
-                result = self.run_step("Replace", dict(pages=[[old]],
-                    current={str(old['id']): current}), RELEASE_WORKFLOW)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertFalse(any('DELETE' in c for c in self.calls()))
-
     def test_distribution_uses_github_latest_even_for_stale_events(self):
         self.env['REQUESTED_TAG'] = '2-0.2.0'
         result = self.run_step("Resolve", dict(latest=self.source,

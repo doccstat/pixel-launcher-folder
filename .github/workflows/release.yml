@@ -101,15 +101,3 @@ jobs:
           fi
           # GITHUB_TOKEN release writes do not trigger release-event workflows.
           gh workflow run distribute-release.yml --repo "$GITHUB_REPOSITORY" --ref main
-          # Retire only the old automation's drafts after the stable release exists.
-          jq -r '.[][] | select(.draft == true and .author.login == "github-actions[bot]" and
-            (.tag_name | test("^[1-9][0-9]*-.+-build\\.[1-9][0-9]*$")) and
-            .name == (.tag_name | sub("^[0-9]+-"; ""))) | .id' <<<"$releases" |
-            while read -r id; do
-              current=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id")
-              if jq -e '.draft == true and .author.login == "github-actions[bot]" and
-                  (.tag_name | test("^[1-9][0-9]*-.+-build\\.[1-9][0-9]*$")) and
-                  .name == (.tag_name | sub("^[0-9]+-"; ""))' <<<"$current" >/dev/null; then
-                gh api "repos/$GITHUB_REPOSITORY/releases/$id" --method DELETE
-              fi
-            done
