@@ -70,7 +70,8 @@ final class Ui {
     static int surfaceMuted(Context c) {
         return dark(c) ? Color.rgb(36, 38, 45) : Color.rgb(239, 241, 247);
     }
-    static int pickerActive(Context c) { return primary(c); }
+    // Wallpaper accents can be gray; membership must stay distinct from the elsewhere marker.
+    static int pickerActive(Context c) { return dark(c) ? Color.rgb(138, 180, 248) : Color.rgb(26, 115, 232); }
     static int pickerElsewhere(Context c) { return dark(c) ? Color.rgb(145, 148, 160) : Color.rgb(124, 127, 138); }
 
     static ColorStateList enabledColor(Context c, int color) {

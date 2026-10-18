@@ -4,10 +4,13 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.database.Cursor;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -212,16 +215,39 @@ public final class FolderTests extends Instrumentation {
             labels.put("a.pkg/.A", new AppEntry("a.pkg/.A"));
             labels.put("m.pkg/.M", new AppEntry("m.pkg/.M"));
             check(FolderRow.sortedApps(order, labels).get(0).equals("a.pkg/.A"), "Folder apps sort by label");
-            android.widget.CheckedTextView indicator = new android.widget.CheckedTextView(context);
-            MainActivity.membershipIndicator(context, indicator, true, false);
-            check(indicator.isChecked() && indicator.getCheckMarkTintList().getDefaultColor() == Ui.pickerActive(context),
-                    "Current-folder apps use the active blue checkmark");
-            MainActivity.membershipIndicator(context, indicator, false, true);
-            check(indicator.isChecked() && indicator.getCheckMarkTintList().getDefaultColor() == Ui.pickerElsewhere(context),
-                    "Other-folder apps use the inactive gray checkmark");
-            MainActivity.membershipIndicator(context, indicator, false, false);
-            check(!indicator.isChecked() && indicator.getCheckMarkTintList().getDefaultColor() == Ui.pickerElsewhere(context),
-                    "Unassigned apps have no active checkmark");
+            runOnMainSync(() -> {
+                for (boolean night : new boolean[]{false, true}) {
+                    Configuration config = new Configuration(context.getResources().getConfiguration());
+                    config.uiMode = (config.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
+                            | (night ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
+                    Context themed = new android.view.ContextThemeWrapper(context.createConfigurationContext(config),
+                            night ? android.R.style.Theme_Material_NoActionBar : android.R.style.Theme_Material_Light_NoActionBar);
+                    check(Ui.pickerActive(themed) == (night ? 0xff8ab4f8 : 0xff1a73e8),
+                            "Selection stays blue regardless of wallpaper in light and dark themes");
+                    float surface = Color.luminance(Ui.cardColor(themed));
+                    for (int tint : new int[]{Ui.pickerActive(themed), Ui.pickerElsewhere(themed)}) {
+                        float mark = Color.luminance(tint);
+                        check((Math.max(surface, mark) + .05f) / (Math.min(surface, mark) + .05f) >= 3,
+                                "Picker marks have at least 3:1 contrast against the sheet");
+                    }
+                    CheckBox indicator = new CheckBox(themed);
+                    MainActivity.membershipIndicator(themed, indicator, true, false);
+                    check(indicator.isChecked() && indicator.getButtonTintList().getDefaultColor() == Ui.pickerActive(themed)
+                                    && "Selected in this folder".contentEquals(indicator.getStateDescription()),
+                            "Current-folder apps use the active blue checkmark");
+                    MainActivity.membershipIndicator(themed, indicator, false, true);
+                    check(indicator.isChecked() && indicator.getButtonTintList().getDefaultColor() == Ui.pickerElsewhere(themed)
+                                    && "In another folder; tap to add here".contentEquals(indicator.getStateDescription()),
+                            "Other-folder apps use the inactive gray checkmark");
+                    MainActivity.membershipIndicator(themed, indicator, false, false);
+                    check(!indicator.isChecked() && indicator.getButtonTintList().getDefaultColor() == Ui.pickerElsewhere(themed)
+                                    && "Not selected".contentEquals(indicator.getStateDescription()),
+                            "Unassigned apps use an unchecked outline");
+                    MainActivity.membershipIndicator(themed, indicator, true, true);
+                    check(indicator.isChecked() && indicator.getButtonTintList().getDefaultColor() == Ui.pickerActive(themed),
+                            "Current-folder selection takes precedence over other-folder membership");
+                }
+            });
             reject("{\"version\":1,\"folders\":[{\"id\":\"a\",\"name\":\"A\",\"profile\":\"private\",\"serial\":11,\"apps\":[]}]}");
             reject("{\"version\":1,\"keepInDrawer\":\"false\",\"folders\":[]}");
             List<Profiles> profiles = Profiles.available(context);
