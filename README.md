@@ -58,5 +58,23 @@ or modifies applications.
 
 Report issues at the [source repository](https://github.com/doccstat/pixel-launcher-folder/issues)
 with the device model, Android version, Pixel Launcher version, module version,
-and reproduction steps. This project is not affiliated with Google, Pixel
-Launcher, or LSPosed.
+and reproduction steps.
+
+## Disclaimer
+
+Pixel Launcher Folders modifies Pixel Launcher through an Xposed/LSPosed module.
+It requires root and is intended for personal use on devices you own. It is not
+affiliated with Google, Pixel Launcher, LSPosed, or any device manufacturer. Use
+it at your own risk and back up your launcher configuration: an incompatible
+launcher or firmware update can hide or break the module, and a root/Xposed
+failure can prevent the device from booting. The authors are not responsible for
+data loss, warranty issues, or problems caused by other modules or firmware.
+
+## License
+
+Pixel Launcher Folders is licensed under the GNU General Public License, version
+3 only (`GPL-3.0-only`). See the
+[license text](https://github.com/doccstat/pixel-launcher-folder/blob/main/LICENSE).
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.
