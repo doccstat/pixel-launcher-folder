@@ -73,6 +73,7 @@ jobs:
 
           - Adds customizable folders to the Pixel Launcher app drawer.
           - Sorts folder apps and previews alphabetically.
+          - Uses clear blue selection ticks, gray other-folder ticks, and empty checkbox outlines.
           - Supports user-visible backup and restore.
           - Preserves Android profile identity without modifying installed apps.
           - Uses the native Home and WM Shell activity-drag paths.

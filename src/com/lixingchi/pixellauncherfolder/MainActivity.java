@@ -15,7 +15,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
-import android.widget.CheckedTextView;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -318,9 +318,9 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null).setPositiveButton("Delete folder", (d, w) -> { List<Folders.Folder> next = new ArrayList<>(folders); next.remove(folder); if (save(next)) done.run(); }).show();
     }
 
-    static void membershipIndicator(Context context, CheckedTextView text, boolean selected, boolean elsewhere) {
-        text.setChecked(selected || elsewhere); text.setCheckMarkTintList(ColorStateList.valueOf(selected ? Ui.pickerActive(context) : Ui.pickerElsewhere(context)));
-        text.setStateDescription(selected ? "Selected in this folder" : elsewhere ? "In another folder; tap to add here" : "Not selected");
+    static void membershipIndicator(Context context, CheckBox check, boolean selected, boolean elsewhere) {
+        check.setChecked(selected || elsewhere); check.setButtonTintList(ColorStateList.valueOf(selected ? Ui.pickerActive(context) : Ui.pickerElsewhere(context)));
+        check.setStateDescription(selected ? "Selected in this folder" : elsewhere ? "In another folder; tap to add here" : "Not selected");
     }
 
     private void pickApps(Set<String> selected, Profiles profile, Folders.Folder current, Runnable done) {
@@ -349,8 +349,8 @@ public final class MainActivity extends Activity {
                 TextView label = Ui.text(MainActivity.this, entry.info == null ? "Unavailable app" : entry.label, 16); label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); copy.addView(label);
                 if (entry.info == null || elsewhere) { copy.addView(Ui.spacer(MainActivity.this, 4)); copy.addView(Ui.secondary(MainActivity.this, entry.info == null ? entry.key : checked ? "Also in another folder" : "In another folder", 12)); }
                 row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
-                CheckedTextView check = new CheckedTextView(MainActivity.this); check.setCheckMarkDrawable(android.R.drawable.checkbox_on_background); membershipIndicator(MainActivity.this, check, checked, elsewhere);
-                if (!checked && !elsewhere) check.setCheckMarkDrawable(android.R.drawable.checkbox_off_background);
+                CheckBox check = new CheckBox(MainActivity.this); check.setClickable(false); check.setFocusable(false); check.setBackground(null);
+                membershipIndicator(MainActivity.this, check, checked, elsewhere);
                 check.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO); row.addView(check, new LinearLayout.LayoutParams(Ui.dp(MainActivity.this, 32), Ui.dp(MainActivity.this, 32)));
                 row.setContentDescription(label.getText() + ", " + check.getStateDescription()); return row;
             }

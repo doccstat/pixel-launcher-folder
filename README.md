@@ -7,6 +7,8 @@ folders to the Pixel Launcher app drawer.
 
 - Create and arrange folders as normal app-drawer cells.
 - Sort folder contents and four-icon previews alphabetically.
+- Pick apps with blue ticks for this folder, gray ticks for other folders, and
+  empty outlines for unassigned apps, independent of wallpaper colors.
 - Optionally keep folder apps out of the main alphabetical app list.
 - Tap to launch an app; long-press to create a Home shortcut or start a native WM Shell drag.
 - Back up and restore assignments through Android's user-selected Files storage.
