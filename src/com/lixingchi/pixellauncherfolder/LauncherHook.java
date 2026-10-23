@@ -4,6 +4,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.database.ContentObserver;
 import android.database.Cursor;
+import android.content.pm.LauncherApps;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.UserHandle;
@@ -168,16 +169,24 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                         List<Folders.Folder> folders = controller.visibleFolders();
                         if (folders.isEmpty()) return;
                         List<?> original = (List<?>) p.args[1];
-                        List<Object> filtered = new ArrayList<>();
-                        long serial = controller.serial();
-                        for (Object app : original) {
-                            ComponentName component = (ComponentName) get(app, "componentName");
-                            UserHandle user = (UserHandle) get(app, "user");
-                            long appSerial = controller.context.getSystemService(android.os.UserManager.class).getSerialNumberForUser(user);
-                            boolean hidden = appSerial == serial && component != null
-                                    && Folders.shouldHide(controller.keep, folders, controller.kind, appSerial,
-                                            Profiles.personalSerial(controller.context), component.flattenToString());
-                            if (!hidden) filtered.add(app);
+                        // Keep-in-drawer means no app can be hidden; avoid copying,
+                        // per-app service lookups and folder scans in the common case.
+                        List<?> filtered = original;
+                        if (!controller.keep) {
+                            List<Object> visible = new ArrayList<>();
+                            long serial = controller.serial();
+                            long personal = Profiles.personalSerial(controller.context);
+                            android.os.UserManager users = controller.context.getSystemService(android.os.UserManager.class);
+                            for (Object app : original) {
+                                ComponentName component = (ComponentName) get(app, "componentName");
+                                UserHandle user = (UserHandle) get(app, "user");
+                                long appSerial = users.getSerialNumberForUser(user);
+                                boolean hidden = appSerial == serial && component != null
+                                        && Folders.shouldHide(false, folders, controller.kind, appSerial,
+                                                personal, component.flattenToString());
+                                if (!hidden) visible.add(app);
+                            }
+                            filtered = visible;
                         }
                         // Prepare all reflection before touching the live adapter collection.
                         List<?> sections = (List<?>) get(p.thisObject, "mFastScrollerSections");
@@ -211,6 +220,7 @@ public final class LauncherHook implements IXposedHookLoadPackage {
         final Handler main = new Handler(Looper.getMainLooper());
         List<Folders.Folder> folders = new ArrayList<>();
         boolean keep = true, registered, loading, again, disposed;
+        LauncherApps.Callback appsCallback;
         final ContentObserver observer = new ContentObserver(main) { @Override public void onChange(boolean self) { reload(); } };
         Controller(Object model, View view, String kind) {
             this.model = new WeakReference<>(model); recycler = view; context = view.getContext(); this.kind = kind;
@@ -235,10 +245,26 @@ public final class LauncherHook implements IXposedHookLoadPackage {
         public void onViewAttachedToWindow(View view) {
             try { context.getContentResolver().registerContentObserver(Folders.URI, false, observer); registered = true; }
             catch (RuntimeException error) { log(error); }
+            if (appsCallback == null) {
+                LauncherApps.Callback callback = new LauncherApps.Callback() {
+                    @Override public void onPackageRemoved(String packageName, UserHandle user) { reload(); }
+                    @Override public void onPackageAdded(String packageName, UserHandle user) { reload(); }
+                    @Override public void onPackageChanged(String packageName, UserHandle user) { reload(); }
+                    @Override public void onPackagesAvailable(String[] packageNames, UserHandle user, boolean replacing) { reload(); }
+                    @Override public void onPackagesUnavailable(String[] packageNames, UserHandle user, boolean replacing) { reload(); }
+                };
+                try { context.getSystemService(LauncherApps.class).registerCallback(callback, main); appsCallback = callback; }
+                catch (RuntimeException error) { log(error); }
+            }
             reload();
         }
         public void onViewDetachedFromWindow(View view) {
             if (registered) { context.getContentResolver().unregisterContentObserver(observer); registered = false; }
+            if (appsCallback != null) {
+                try { context.getSystemService(LauncherApps.class).unregisterCallback(appsCallback); }
+                catch (RuntimeException error) { log(error); }
+                appsCallback = null;
+            }
         }
         void reload() {
             if (disposed || !recycler.isAttachedToWindow()) return;
@@ -251,6 +277,8 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                     }
                 } catch (Exception error) { log(error); }
                 List<Folders.Folder> value = next; boolean keepValue = option;
+                // Show the folder cells immediately; rows queue behind this task
+                // and render together once the shared app list is cached.
                 main.post(() -> {
                     loading = false;
                     if (disposed) return;
@@ -262,6 +290,16 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                     }
                     if (again) { again = false; reload(); }
                 });
+                if (!value.isEmpty()) {
+                    try {
+                        long profileSerial = serial();
+                        List<AppEntry> entries = AppEntry.list(context, kind, profileSerial);
+                        FolderRow.cache(true, kind, profileSerial, value, entries);
+                    } catch (Exception error) {
+                        try { FolderRow.invalidate(kind, serial()); } catch (Exception ignored) { }
+                        log(error);
+                    }
+                }
             });
         }
     }

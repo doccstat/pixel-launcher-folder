@@ -20,6 +20,7 @@ import android.widget.PopupWindow;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -30,6 +31,31 @@ import java.util.concurrent.TimeUnit;
 final class FolderRow extends FrameLayout {
     static final ThreadPoolExecutor IO = new ThreadPoolExecutor(0, 1, 5, TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(), task -> { Thread t = new Thread(task, "pixel-folders-read"); t.setDaemon(true); return t; });
+    private static final int CACHE_LIMIT = 4;
+    private static final Map<String, Snapshot> CACHE = new LinkedHashMap<String, Snapshot>(CACHE_LIMIT, .75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Snapshot> eldest) { return size() > CACHE_LIMIT; }
+    };
+
+    /** Parsed folder JSON and the profile's app list, shared by every folder row in one drawer. */
+    static final class Snapshot {
+        final List<Folders.Folder> folders;
+        final List<AppEntry> entries;
+        Snapshot(List<Folders.Folder> folders, List<AppEntry> entries) {
+            this.folders = folders; this.entries = entries;
+        }
+    }
+    private static String cacheKey(boolean live, String profile, long serial) {
+        return (live ? "l:" : "p:") + profile + ":" + serial;
+    }
+    static void cache(boolean live, String profile, long serial, List<Folders.Folder> folders, List<AppEntry> entries) {
+        synchronized (CACHE) { CACHE.put(cacheKey(live, profile, serial), new Snapshot(folders, entries)); }
+    }
+    private static Snapshot cached(boolean live, String profile, long serial) {
+        synchronized (CACHE) { return CACHE.get(cacheKey(live, profile, serial)); }
+    }
+    static void invalidate(String profile, long serial) {
+        synchronized (CACHE) { CACHE.remove(cacheKey(true, profile, serial)); }
+    }
     private final LinearLayout content;
     private final boolean live;
     private final boolean single;
@@ -140,23 +166,30 @@ final class FolderRow extends FrameLayout {
         final String readProfile = profile; final long readSerial = serial; final int readGeneration = generation;
         IO.execute(() -> {
             try {
-                String raw;
-                if (live) {
-                    try (Cursor cursor = getContext().getContentResolver().query(Folders.URI, new String[]{"json"}, null, null, null)) {
-                        if (cursor == null || !cursor.moveToFirst()) throw new IllegalStateException("No folder configuration");
-                        raw = cursor.getString(0);
-                    }
-                } else raw = Folders.read(getContext());
-                List<Folders.Folder> allFolders = Folders.parse(raw);
-                List<Folders.Folder> folders = new java.util.ArrayList<>();
                 long profileSerial = readSerial < 0 ? Profiles.personalSerial(getContext()) : readSerial;
-                for (Folders.Folder folder : allFolders)
-                    if (Folders.matches(folder, readProfile, profileSerial, Profiles.personalSerial(getContext()))) folders.add(folder);
-                List<AppEntry> entries = AppEntry.list(getContext(), readProfile, readSerial);
+                Snapshot snapshot = live ? cached(true, readProfile, profileSerial) : null;
+                if (snapshot == null) {
+                    String raw;
+                    if (live) {
+                        try (Cursor cursor = getContext().getContentResolver().query(Folders.URI, new String[]{"json"}, null, null, null)) {
+                            if (cursor == null || !cursor.moveToFirst()) throw new IllegalStateException("No folder configuration");
+                            raw = cursor.getString(0);
+                        }
+                    } else raw = Folders.read(getContext());
+                    List<Folders.Folder> allFolders = Folders.parse(raw);
+                    List<AppEntry> entries = AppEntry.list(getContext(), readProfile, profileSerial);
+                    snapshot = new Snapshot(allFolders, entries);
+                    if (live) cache(true, readProfile, profileSerial, allFolders, entries);
+                }
+                long personal = Profiles.personalSerial(getContext());
+                List<Folders.Folder> folders = new java.util.ArrayList<>();
+                for (Folders.Folder folder : snapshot.folders)
+                    if (Folders.matches(folder, readProfile, profileSerial, personal)) folders.add(folder);
+                final Snapshot result = snapshot; final List<Folders.Folder> visible = folders;
                 main.post(() -> {
                     if (attached && readGeneration == generation) {
-                        apps.clear(); for (AppEntry e : entries) apps.put(e.key, e);
-                        render(folders);
+                        apps.clear(); for (AppEntry e : result.entries) apps.put(e.key, e);
+                        render(visible);
                     }
                     finishLoad();
                 });
