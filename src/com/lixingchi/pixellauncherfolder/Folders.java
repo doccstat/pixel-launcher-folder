@@ -53,7 +53,7 @@ final class Folders {
         if (raw == null || raw.length() > MAX_BYTES) throw new JSONException("Invalid configuration size");
         JSONObject root = new JSONObject(raw);
         if (root.getInt("version") != 1) throw new JSONException("Unsupported folder format");
-        keepInDrawer(raw);
+        keepInDrawer(raw); followAppChanges(raw);
         JSONArray array = root.getJSONArray("folders");
         if (array.length() > MAX_FOLDERS) throw new JSONException("Too many folders");
         List<Folder> result = new ArrayList<>();
@@ -87,13 +87,15 @@ final class Folders {
 
     static String encode(List<Folder> folders) throws JSONException { return encode(folders, true); }
 
-    static String encode(List<Folder> folders, boolean keep) throws JSONException {
+    static String encode(List<Folder> folders, boolean keep) throws JSONException { return encode(folders, keep, true); }
+
+    static String encode(List<Folder> folders, boolean keep, boolean follow) throws JSONException {
         JSONArray array = new JSONArray();
         for (Folder folder : folders) {
             array.put(new JSONObject().put("id", folder.id).put("name", folder.name.trim()).put("profile", folder.profile).put("serial", folder.serial)
                     .put("apps", new JSONArray(folder.apps)));
         }
-        String raw = new JSONObject().put("version", 1).put("keepInDrawer", keep).put("folders", array).toString();
+        String raw = new JSONObject().put("version", 1).put("keepInDrawer", keep).put("followAppChanges", follow).put("folders", array).toString();
         parse(raw); // Reject invalid changes before touching durable state.
         return raw;
     }
@@ -136,7 +138,7 @@ final class Folders {
         try {
             if (!children(context, tree).containsKey(".pixel-launcher-folders.json")) return;
             ImportResult external = importTree(context);
-            String raw = encode(external.folders, external.keep);
+            String raw = encode(external.folders, external.keep, external.follow);
             if (!raw.equals(readInternal(context))) {
                 preferences(context).edit().putString("json", raw).commit();
                 notifyChange(context);
@@ -149,7 +151,11 @@ final class Folders {
     }
 
     static void save(Context context, List<Folder> folders, boolean keep) throws JSONException {
-        String raw = encode(folders, keep);
+        save(context, folders, keep, followAppChanges(read(context)));
+    }
+
+    static void save(Context context, List<Folder> folders, boolean keep, boolean follow) throws JSONException {
+        String raw = encode(folders, keep, follow);
         if (!preferences(context).edit().putString("json", raw).commit())
             throw new IllegalStateException("Could not save folders");
         notifyChange(context);
@@ -173,10 +179,10 @@ final class Folders {
 
     static final class ImportResult {
         final List<Folder> folders;
-        final boolean keep;
+        final boolean keep, follow;
         final int skipped;
-        ImportResult(List<Folder> folders, boolean keep, int skipped) {
-            this.folders = folders; this.keep = keep; this.skipped = skipped;
+        ImportResult(List<Folder> folders, boolean keep, boolean follow, int skipped) {
+            this.folders = folders; this.keep = keep; this.follow = follow; this.skipped = skipped;
         }
     }
 
@@ -245,7 +251,7 @@ final class Folders {
                     .put("profile", folder.profile).put("serial", folder.serial).put("file", file));
         }
         JSONObject manifest = new JSONObject().put("version", 1).put("keepInDrawer", keepInDrawer(readInternal(context)))
-                .put("folders", manifestFolders);
+                .put("followAppChanges", followAppChanges(readInternal(context))).put("folders", manifestFolders);
         String oldManifestText = current.containsKey(".pixel-launcher-folders.json")
                 ? readFile(context, current.get(".pixel-launcher-folders.json")) : null;
         if (oldManifestText != null) {
@@ -301,11 +307,12 @@ final class Folders {
         Uri tree = backupTree(context);
         if (tree == null) throw new IllegalStateException("Choose a backup folder first");
         Map<String, Uri> files = children(context, tree); Uri manifestUri = files.get(".pixel-launcher-folders.json");
-        List<Folder> result = new ArrayList<>(); int skipped = 0; boolean keep = true;
+        List<Folder> result = new ArrayList<>(); int skipped = 0; boolean keep = true, follow = true;
         if (manifestUri != null) {
             JSONObject manifest = new JSONObject(readFile(context, manifestUri));
             if (manifest.getInt("version") != 1) throw new JSONException("Unsupported backup format");
-            keep = manifest.optBoolean("keepInDrawer", true); JSONArray entries = manifest.getJSONArray("folders");
+            keep = manifest.optBoolean("keepInDrawer", true); follow = followAppChanges(manifest.toString());
+            JSONArray entries = manifest.getJSONArray("folders");
             for (int i = 0; i < entries.length(); i++) {
                 JSONObject item = entries.getJSONObject(i); Uri file = files.get(item.getString("file"));
                 if (file == null) continue;
@@ -325,8 +332,8 @@ final class Folders {
             }
         }
         result = withoutBackupArtifacts(result);
-        encode(result, keep); // Validate bounds and component structure before returning.
-        return new ImportResult(result, keep, skipped);
+        encode(result, keep, follow); // Validate bounds and component structure before returning.
+        return new ImportResult(result, keep, follow, skipped);
     }
 
     static boolean keepInDrawer(String raw) throws JSONException {
@@ -337,8 +344,21 @@ final class Folders {
         return (Boolean) value;
     }
 
+    static boolean followAppChanges(String raw) throws JSONException {
+        JSONObject root = new JSONObject(raw);
+        if (!root.has("followAppChanges")) return true;
+        Object value = root.get("followAppChanges");
+        if (!(value instanceof Boolean)) throw new JSONException("Invalid app-change option");
+        return (Boolean) value;
+    }
+
+    static void setFollowAppChanges(Context context, boolean follow) throws JSONException {
+        String raw = read(context);
+        save(context, parse(raw), keepInDrawer(raw), follow);
+    }
+
     static void setKeepInDrawer(Context context, boolean keep) throws JSONException {
-        String raw = encode(parse(read(context)), keep);
+        String raw = encode(parse(read(context)), keep, followAppChanges(read(context)));
         if (!preferences(context).edit().putString("json", raw).commit())
             throw new IllegalStateException("Could not save display option");
         notifyChange(context);
@@ -351,19 +371,21 @@ final class Folders {
     }
 
     static boolean assignedElsewhere(List<Folder> folders, Folder current, String kind, long serial,
-            long personalSerial, String component) {
+            long personalSerial, String component, Set<String> available, boolean follow) {
         for (Folder folder : folders) {
             if (current != null && current.id.equals(folder.id)) continue;
-            if (matches(folder, kind, serial, personalSerial) && folder.apps.contains(component)) return true;
+            if (matches(folder, kind, serial, personalSerial)
+                    && AppResolver.contains(folder.apps, component, available, follow)) return true;
         }
         return false;
     }
 
     static boolean shouldHide(boolean keep, List<Folder> folders, String kind, long serial,
-            long personalSerial, String component) {
+            long personalSerial, String component, Set<String> available, boolean follow) {
         if (keep) return false;
         for (Folder folder : folders)
-            if (matches(folder, kind, serial, personalSerial) && folder.apps.contains(component)) return true;
+            if (matches(folder, kind, serial, personalSerial)
+                    && AppResolver.contains(folder.apps, component, available, follow)) return true;
         return false;
     }
 

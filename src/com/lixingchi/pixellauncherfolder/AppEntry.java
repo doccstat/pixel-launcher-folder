@@ -43,6 +43,15 @@ final class AppEntry {
         entries.sort((a, b) -> { int c = collator.compare(a.label, b.label); return c == 0 ? a.key.compareTo(b.key) : c; });
         return entries;
     }
+    static java.util.Map<String, AppEntry> index(List<AppEntry> entries) {
+        java.util.Map<String, AppEntry> result = new java.util.HashMap<>();
+        for (AppEntry entry : entries) result.put(entry.key, entry);
+        return result;
+    }
+    static AppEntry resolve(String key, java.util.Map<String, AppEntry> apps, boolean followChanges) {
+        ComponentName component = ComponentName.unflattenFromString(key);
+        return component == null ? null : apps.get(AppResolver.resolve(component.flattenToString(), apps.keySet(), followChanges));
+    }
     static void launch(Context context, String key) { launch(context, key, "personal", -1); }
 
     /** Floating taskbar drawers use WM Shell; Home drawers need the workspace controller. */

@@ -58,6 +58,12 @@ public final class FolderTests extends Instrumentation {
         }
         return null;
     }
+    private android.widget.PopupWindow popup(FolderRow row) {
+        try {
+            java.lang.reflect.Field field = FolderRow.class.getDeclaredField("folderPopup"); field.setAccessible(true);
+            return (android.widget.PopupWindow) field.get(row);
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+    }
     @Override public void onStart() {
         Context context = getTargetContext();
         if ("inspect".equals(mode) || "repair".equals(mode)) {
@@ -164,11 +170,11 @@ public final class FolderTests extends Instrumentation {
             Folders.Folder other = Folders.Folder.create("Other", Arrays.asList(normalized.get(0).apps.get(0)));
             List<Folders.Folder> memberships = Arrays.asList(normalized.get(0), other);
             check(Folders.assignedElsewhere(memberships, normalized.get(0), "personal", ownerSerial(context),
-                    ownerSerial(context), normalized.get(0).apps.get(0)), "Other-folder membership is visible");
+                    ownerSerial(context), normalized.get(0).apps.get(0), java.util.Collections.emptySet(), false), "Other-folder membership is visible");
             check(Folders.assignedElsewhere(memberships, other, "personal", ownerSerial(context),
-                    ownerSerial(context), normalized.get(0).apps.get(0)), "Membership in a different folder remains visible");
+                    ownerSerial(context), normalized.get(0).apps.get(0), java.util.Collections.emptySet(), false), "Membership in a different folder remains visible");
             check(!Folders.assignedElsewhere(Arrays.asList(other), other, "personal", ownerSerial(context),
-                    ownerSerial(context), normalized.get(0).apps.get(0)), "Current-folder membership is not marked elsewhere");
+                    ownerSerial(context), normalized.get(0).apps.get(0), java.util.Collections.emptySet(), false), "Current-folder membership is not marked elsewhere");
             String duplicate = "{\"version\":1,\"folders\":[{\"id\":\"same\",\"name\":\"A\",\"apps\":[]},{\"id\":\"same\",\"name\":\"B\",\"apps\":[]}]";
             reject(duplicate);
             reject("{\"version\":1,\"folders\":[{\"id\":\"a\",\"name\":\"   \",\"apps\":[]}]}");
@@ -199,14 +205,22 @@ public final class FolderTests extends Instrumentation {
             check(!Folders.keepInDrawer(Folders.read(context)), "Folder edits preserve display option");
             Folders.setKeepInDrawer(context, true);
             check(Folders.keepInDrawer(Folders.read(context)), "Keep-apps option restored");
+            check(Folders.followAppChanges("{\"version\":1,\"folders\":[]}"), "App-change following defaults on");
+            Folders.setFollowAppChanges(context, false); Folders.save(context, normalized); Folders.setKeepInDrawer(context, false);
+            check(!Folders.followAppChanges(Folders.read(context)), "Folder edits and drawer option preserve exact-entry choice");
+            check(normalized.get(0).apps.equals(Folders.parse(Folders.read(context)).get(0).apps), "App-change setting preserves saved components");
+            Folders.setFollowAppChanges(context, true);
+            check(!Folders.keepInDrawer(Folders.read(context)), "App-change setting preserves drawer option");
+            Folders.setKeepInDrawer(context, true);
+            reject("{\"version\":1,\"followAppChanges\":\"false\",\"folders\":[]}");
             long owner = Profiles.personalSerial(context);
             String component = normalized.get(0).apps.get(0);
             List<Folders.Folder> isolated = Arrays.asList(Folders.Folder.create("Work", "work", 100, Arrays.asList(component)));
-            check(Folders.shouldHide(false, isolated, "work", 100, owner, component), "Folder-only hides same profile copy");
-            check(!Folders.shouldHide(true, isolated, "work", 100, owner, component), "Keep mode preserves app list copy");
-            check(!Folders.shouldHide(false, isolated, "personal", owner, owner, component), "Work membership never hides Personal copy");
-            check(!Folders.shouldHide(false, isolated, "work", 101, owner, component), "Removed/recreated profile serial never matches");
-            check(!Folders.shouldHide(false, isolated, "work", 100, owner, "other/.Activity"), "Unassigned apps preserved");
+            check(Folders.shouldHide(false, isolated, "work", 100, owner, component, java.util.Collections.emptySet(), false), "Folder-only hides same profile copy");
+            check(!Folders.shouldHide(true, isolated, "work", 100, owner, component, java.util.Collections.emptySet(), false), "Keep mode preserves app list copy");
+            check(!Folders.shouldHide(false, isolated, "personal", owner, owner, component, java.util.Collections.emptySet(), false), "Work membership never hides Personal copy");
+            check(!Folders.shouldHide(false, isolated, "work", 101, owner, component, java.util.Collections.emptySet(), false), "Removed/recreated profile serial never matches");
+            check(!Folders.shouldHide(false, isolated, "work", 100, owner, "other/.Activity", java.util.Collections.emptySet(), false), "Unassigned apps preserved");
             check(Folders.parse(Folders.encode(isolated)).get(0).serial == 100, "Work serial round trip");
             Folders.Folder order = Folders.Folder.create("Order", Arrays.asList(
                     "z.pkg/.Z", "a.pkg/.A", "m.pkg/.M"));
@@ -214,7 +228,17 @@ public final class FolderTests extends Instrumentation {
             labels.put("z.pkg/.Z", new AppEntry("z.pkg/.Z"));
             labels.put("a.pkg/.A", new AppEntry("a.pkg/.A"));
             labels.put("m.pkg/.M", new AppEntry("m.pkg/.M"));
-            check(FolderRow.sortedApps(order, labels).get(0).equals("a.pkg/.A"), "Folder apps sort by label");
+            check(FolderRow.sortedApps(order, labels, true).get(0).equals("a.pkg/.A"), "Folder apps sort by label");
+            AppEntry installed = AppEntry.list(context).stream().filter(e -> e.key.equals(component)).findFirst().get();
+            java.util.Map<String, AppEntry> availableApps = AppEntry.index(Arrays.asList(installed));
+            String oldAlias = Folders.PACKAGE + "/" + Folders.PACKAGE + ".OldIcon";
+            Folders.Folder changing = Folders.Folder.create("Changing", Arrays.asList(oldAlias));
+            check(AppEntry.resolve(oldAlias, availableApps, true) == installed, "Missing icon alias resolves to current metadata and launch key");
+            check(AppEntry.resolve(oldAlias, availableApps, false) == null, "Exact-entry choice never substitutes an alias");
+            check(Folders.shouldHide(false, Arrays.asList(changing), "personal", owner, owner, installed.key, availableApps.keySet(), true), "Folder-only mode hides resolved alias");
+            check(!Folders.shouldHide(false, Arrays.asList(changing), "work", owner, owner, installed.key, availableApps.keySet(), true), "Alias following cannot cross profile kinds");
+            check(Folders.assignedElsewhere(Arrays.asList(changing), null, "personal", owner, owner, installed.key, availableApps.keySet(), true), "Picker sees alias membership in another folder");
+            check(changing.apps.equals(Arrays.asList(oldAlias)), "Resolution never rewrites saved assignments");
             runOnMainSync(() -> {
                 for (boolean night : new boolean[]{false, true}) {
                     Configuration config = new Configuration(context.getResources().getConfiguration());
@@ -268,7 +292,10 @@ public final class FolderTests extends Instrumentation {
                 View settings = find(screen.getWindow().getDecorView(), "Settings"); check(settings != null && settings.performClick(), "Settings navigation");
             });
             waitForIdleSync();
-            runOnMainSync(() -> check(find(screen.getWindow().getDecorView(), "Keep folder apps in All apps") != null, "Display option rendered"));
+            runOnMainSync(() -> {
+                check(find(screen.getWindow().getDecorView(), "Keep folder apps in All apps") != null, "Display option rendered");
+                check(find(screen.getWindow().getDecorView(), "Follow app icon/name changes") != null, "App-change choice is visible");
+            });
             // Exercise the actual row independently of Vector. Draw only our view,
             // including when the lockscreen covers the Activity.
             final FolderRow[] preview = new FolderRow[1];
@@ -356,11 +383,38 @@ public final class FolderTests extends Instrumentation {
                     check(!popup.isShowing(), "Detaching drawer dismisses popup");
                 } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
             });
+            // Same adapter row, same folder ID: changing app metadata must refresh both the row and open popup.
+            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), new ArrayList<>(), true, true));
+            runOnMainSync(() -> {
+                preview[0] = new FolderRow(screen, "personal", owner, true, true);
+                preview[0].bindFolderIndex(0); screen.setContentView(preview[0]);
+            });
+            waitForIdleSync(); FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            runOnMainSync(() -> {
+                ((View) find(preview[0], "Changing").getParent()).performClick();
+                check(find(popup(preview[0]).getContentView(), "Unavailable") != null, "Missing alias initially displays unavailable");
+            });
+            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), Arrays.asList(installed), true, true));
+            runOnMainSync(() -> FolderRow.refreshAttached(screen.getWindow().getDecorView()));
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            runOnMainSync(() -> {
+                check(popup(preview[0]).isShowing(), "Refresh keeps the open folder visible");
+                check(find(popup(preview[0]).getContentView(), installed.label) != null, "Open popup receives current app label without settings or adapter rebind");
+                check(find(popup(preview[0]).getContentView(), "Unavailable") == null, "Unavailable placeholder is removed");
+            });
+            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), Arrays.asList(installed), true, false));
+            runOnMainSync(() -> FolderRow.refreshAttached(preview[0]));
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            runOnMainSync(() -> {
+                check(find(popup(preview[0]).getContentView(), "Unavailable") != null, "Disabling alias following updates an existing popup");
+                screen.setContentView(new android.widget.FrameLayout(screen));
+            });
             check(realBefore.equals(realPreferences.getAll()), "User preferences untouched by tests");
             result.putString("stream", "PASS: " + checks + " checks; editor and preview opened; user preferences untouched.\n");
         } catch (Throwable error) {
             code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(error));
         } finally {
+            FolderRow.invalidate("personal", ownerSerial(context));
             android.content.SharedPreferences.Editor edit = preferences.edit();
             if (existed) edit.putString("json", original); else edit.remove("json");
             if (backupExisted) edit.putString("backup_tree", originalBackup); else edit.remove("backup_tree");

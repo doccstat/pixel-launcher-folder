@@ -3,7 +3,6 @@ package com.lixingchi.pixellauncherfolder;
 import android.content.ComponentName;
 import android.content.Context;
 import android.database.ContentObserver;
-import android.database.Cursor;
 import android.content.pm.LauncherApps;
 import android.os.Handler;
 import android.os.Looper;
@@ -183,7 +182,7 @@ public final class LauncherHook implements IXposedHookLoadPackage {
                                 long appSerial = users.getSerialNumberForUser(user);
                                 boolean hidden = appSerial == serial && component != null
                                         && Folders.shouldHide(false, folders, controller.kind, appSerial,
-                                                personal, component.flattenToString());
+                                                personal, component.flattenToString(), controller.apps.keySet(), controller.follow);
                                 if (!hidden) visible.add(app);
                             }
                             filtered = visible;
@@ -219,7 +218,8 @@ public final class LauncherHook implements IXposedHookLoadPackage {
         final String kind;
         final Handler main = new Handler(Looper.getMainLooper());
         List<Folders.Folder> folders = new ArrayList<>();
-        boolean keep = true, registered, loading, again, disposed;
+        java.util.Map<String, AppEntry> apps = java.util.Collections.emptyMap();
+        boolean keep = true, follow = true, registered, loading, again, disposed;
         LauncherApps.Callback appsCallback;
         final ContentObserver observer = new ContentObserver(main) { @Override public void onChange(boolean self) { reload(); } };
         Controller(Object model, View view, String kind) {
@@ -268,38 +268,37 @@ public final class LauncherHook implements IXposedHookLoadPackage {
         }
         void reload() {
             if (disposed || !recycler.isAttachedToWindow()) return;
-            if (loading) { again = true; return; } loading = true;
+            if (loading) { again = true; return; }
+            final long profileSerial;
+            try { profileSerial = serial(); } catch (Exception error) { log(error); return; }
+            loading = true;
             FolderRow.IO.execute(() -> {
-                List<Folders.Folder> next = new ArrayList<>(); boolean option = true;
-                try (Cursor cursor = context.getContentResolver().query(Folders.URI, null, null, null, null)) {
-                    if (cursor != null && cursor.moveToFirst()) {
-                        String json = cursor.getString(0); next = Folders.parse(json); option = Folders.keepInDrawer(json);
-                    }
-                } catch (Exception error) { log(error); }
-                List<Folders.Folder> value = next; boolean keepValue = option;
-                // Show the folder cells immediately; rows queue behind this task
-                // and render together once the shared app list is cached.
+                FolderRow.Snapshot next = null;
+                try {
+                    next = FolderRow.load(context, true, kind, profileSerial);
+                    FolderRow.cache(kind, profileSerial, next);
+                } catch (Exception error) { FolderRow.invalidate(kind, profileSerial); log(error); }
+                final FolderRow.Snapshot value = next;
                 main.post(() -> {
                     loading = false;
                     if (disposed) return;
-                    folders = value; keep = keepValue;
+                    try {
+                        if (profileSerial != serial()) { again = false; reload(); return; }
+                    } catch (Exception error) { log(error); return; }
+                    if (value != null) {
+                        folders = value.folders; keep = value.keep; follow = value.follow; apps = value.apps;
+                    } else {
+                        folders = java.util.Collections.emptyList(); apps = java.util.Collections.emptyMap(); keep = true;
+                    }
                     Object list = model.get();
                     if (list != null && recycler.isAttachedToWindow()) {
                         try { list.getClass().getMethod("updateAdapterItems").invoke(list); }
                         catch (Exception error) { log(error); }
+                        // Folder adapter identities do not change when an app changes its label/icon.
+                        FolderRow.refreshAttached(recycler);
                     }
                     if (again) { again = false; reload(); }
                 });
-                if (!value.isEmpty()) {
-                    try {
-                        long profileSerial = serial();
-                        List<AppEntry> entries = AppEntry.list(context, kind, profileSerial);
-                        FolderRow.cache(true, kind, profileSerial, value, entries);
-                    } catch (Exception error) {
-                        try { FolderRow.invalidate(kind, serial()); } catch (Exception ignored) { }
-                        log(error);
-                    }
-                }
             });
         }
     }

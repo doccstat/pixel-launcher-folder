@@ -2,7 +2,6 @@ package com.lixingchi.pixellauncherfolder;
 
 import android.content.Context;
 import android.content.Intent;
-import android.database.ContentObserver;
 import android.database.Cursor;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,7 +26,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/** No service/polling: one shared, idle-expiring worker and an attachment-scoped observer. */
+/** No service/polling: rows share one profile snapshot and an idle-expiring worker. */
 final class FolderRow extends FrameLayout {
     static final ThreadPoolExecutor IO = new ThreadPoolExecutor(0, 1, 5, TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(), task -> { Thread t = new Thread(task, "pixel-folders-read"); t.setDaemon(true); return t; });
@@ -39,22 +38,40 @@ final class FolderRow extends FrameLayout {
     /** Parsed folder JSON and the profile's app list, shared by every folder row in one drawer. */
     static final class Snapshot {
         final List<Folders.Folder> folders;
-        final List<AppEntry> entries;
-        Snapshot(List<Folders.Folder> folders, List<AppEntry> entries) {
-            this.folders = folders; this.entries = entries;
+        final Map<String, AppEntry> apps;
+        final boolean keep, follow;
+        Snapshot(List<Folders.Folder> folders, List<AppEntry> entries, boolean keep, boolean follow) {
+            this.folders = folders; this.apps = AppEntry.index(entries); this.keep = keep; this.follow = follow;
         }
     }
-    private static String cacheKey(boolean live, String profile, long serial) {
-        return (live ? "l:" : "p:") + profile + ":" + serial;
+    static Snapshot load(Context context, boolean live, String profile, long serial) throws Exception {
+        String raw;
+        if (live) {
+            try (Cursor cursor = context.getContentResolver().query(Folders.URI, new String[]{"json"}, null, null, null)) {
+                if (cursor == null || !cursor.moveToFirst()) throw new IllegalStateException("No folder configuration");
+                raw = cursor.getString(0);
+            }
+        } else raw = Folders.read(context);
+        List<Folders.Folder> folders = Folders.parse(raw);
+        List<AppEntry> entries = folders.isEmpty() ? java.util.Collections.emptyList() : AppEntry.list(context, profile, serial);
+        return new Snapshot(folders, entries, Folders.keepInDrawer(raw), Folders.followAppChanges(raw));
     }
-    static void cache(boolean live, String profile, long serial, List<Folders.Folder> folders, List<AppEntry> entries) {
-        synchronized (CACHE) { CACHE.put(cacheKey(live, profile, serial), new Snapshot(folders, entries)); }
+    private static String cacheKey(String profile, long serial) { return profile + ":" + serial; }
+    static void cache(String profile, long serial, Snapshot snapshot) {
+        synchronized (CACHE) { CACHE.put(cacheKey(profile, serial), snapshot); }
     }
-    private static Snapshot cached(boolean live, String profile, long serial) {
-        synchronized (CACHE) { return CACHE.get(cacheKey(live, profile, serial)); }
+    private static Snapshot cached(String profile, long serial) {
+        synchronized (CACHE) { return CACHE.get(cacheKey(profile, serial)); }
     }
     static void invalidate(String profile, long serial) {
-        synchronized (CACHE) { CACHE.remove(cacheKey(true, profile, serial)); }
+        synchronized (CACHE) { CACHE.remove(cacheKey(profile, serial)); }
+    }
+    static void refreshAttached(View view) {
+        if (view instanceof FolderRow) ((FolderRow) view).refresh();
+        else if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) refreshAttached(group.getChildAt(i));
+        }
     }
     private final LinearLayout content;
     private final boolean live;
@@ -66,18 +83,17 @@ final class FolderRow extends FrameLayout {
     private final Typeface stockTypeface;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, AppEntry> apps = new HashMap<>();
-    private boolean attached, registered, loading, reload;
+    private boolean attached, loading, reload, followChanges = true;
+    private Snapshot lastSnapshot;
     private String profile;
     private long serial;
     private int generation;
     private int folderIndex = -1;
     private PopupWindow folderPopup;
+    private String popupFolderId;
     private LauncherDrag homeDrag;
     private Context drawerContext;
     private float downX, downY;
-    private final ContentObserver observer = new ContentObserver(main) {
-        @Override public void onChange(boolean self) { refresh(); }
-    };
 
     FolderRow(Context context, String profile, long serial, boolean live) {
         this(context, profile, serial, live, false);
@@ -128,13 +144,16 @@ final class FolderRow extends FrameLayout {
                 MeasureSpec.makeMeasureSpec(expectedHeight(), MeasureSpec.EXACTLY));
     }
 
-    void bindFolderIndex(int index) { folderIndex = index; refresh(); }
+    void bindFolderIndex(int index) {
+        if (folderIndex != index) { folderIndex = index; lastSnapshot = null; generation++; }
+        refresh();
+    }
 
     void bindDrawerContext(Context context) { drawerContext = context; }
 
     void bindProfile(String kind, long profileSerial) {
         if (!profile.equals(kind) || serial != profileSerial) {
-            profile = kind; serial = profileSerial; generation++; content.removeAllViews(); apps.clear();
+            profile = kind; serial = profileSerial; generation++; lastSnapshot = null; content.removeAllViews(); apps.clear();
             dismissFolderPopup();
         }
         refresh();
@@ -142,15 +161,10 @@ final class FolderRow extends FrameLayout {
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow(); attached = true;
-        if (live) {
-            try { getContext().getContentResolver().registerContentObserver(Folders.URI, false, observer); registered = true; }
-            catch (RuntimeException ignored) { }
-        }
         refresh();
     }
     @Override protected void onDetachedFromWindow() {
         attached = false; generation++;
-        if (registered) { getContext().getContentResolver().unregisterContentObserver(observer); registered = false; }
         dismissFolderPopup();
         super.onDetachedFromWindow();
     }
@@ -167,19 +181,10 @@ final class FolderRow extends FrameLayout {
         IO.execute(() -> {
             try {
                 long profileSerial = readSerial < 0 ? Profiles.personalSerial(getContext()) : readSerial;
-                Snapshot snapshot = live ? cached(true, readProfile, profileSerial) : null;
+                Snapshot snapshot = live ? cached(readProfile, profileSerial) : null;
                 if (snapshot == null) {
-                    String raw;
-                    if (live) {
-                        try (Cursor cursor = getContext().getContentResolver().query(Folders.URI, new String[]{"json"}, null, null, null)) {
-                            if (cursor == null || !cursor.moveToFirst()) throw new IllegalStateException("No folder configuration");
-                            raw = cursor.getString(0);
-                        }
-                    } else raw = Folders.read(getContext());
-                    List<Folders.Folder> allFolders = Folders.parse(raw);
-                    List<AppEntry> entries = AppEntry.list(getContext(), readProfile, profileSerial);
-                    snapshot = new Snapshot(allFolders, entries);
-                    if (live) cache(true, readProfile, profileSerial, allFolders, entries);
+                    snapshot = load(getContext(), live, readProfile, profileSerial);
+                    if (live) cache(readProfile, profileSerial, snapshot);
                 }
                 long personal = Profiles.personalSerial(getContext());
                 List<Folders.Folder> folders = new java.util.ArrayList<>();
@@ -187,16 +192,23 @@ final class FolderRow extends FrameLayout {
                     if (Folders.matches(folder, readProfile, profileSerial, personal)) folders.add(folder);
                 final Snapshot result = snapshot; final List<Folders.Folder> visible = folders;
                 main.post(() -> {
-                    if (attached && readGeneration == generation) {
-                        apps.clear(); for (AppEntry e : result.entries) apps.put(e.key, e);
+                    if (attached && readGeneration == generation && result != lastSnapshot && homeDrag == null) {
+                        lastSnapshot = result; followChanges = result.follow;
+                        apps.clear(); apps.putAll(result.apps);
                         render(visible);
+                        if (folderPopup != null) {
+                            Folders.Folder openFolder = null;
+                            for (Folders.Folder folder : visible) if (folder.id.equals(popupFolderId)) openFolder = folder;
+                            if (openFolder == null) dismissFolderPopup();
+                            else open(openFolder, this);
+                        }
                     }
                     finishLoad();
                 });
             } catch (Exception error) {
                 main.post(() -> {
                     if (attached && readGeneration == generation) {
-                        content.removeAllViews();
+                        lastSnapshot = null; apps.clear(); dismissFolderPopup(); content.removeAllViews();
                         content.addView(Ui.button(getContext(), "Profile unavailable · Edit folders", this::settings));
                     }
                     finishLoad();
@@ -210,13 +222,13 @@ final class FolderRow extends FrameLayout {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
         catch (RuntimeException error) { Toast.makeText(getContext(), "Folder settings are unavailable", Toast.LENGTH_SHORT).show(); }
     }
-    private AppEntry entry(String key) { AppEntry e = apps.get(key); return e == null ? new AppEntry(key) : e; }
+    private AppEntry entry(String key) { AppEntry e = AppEntry.resolve(key, apps, followChanges); return e == null ? new AppEntry(key) : e; }
 
-    static List<String> sortedApps(Folders.Folder folder, Map<String, AppEntry> apps) {
+    static List<String> sortedApps(Folders.Folder folder, Map<String, AppEntry> apps, boolean follow) {
         List<String> result = new ArrayList<>(folder.apps);
         Collator collator = Collator.getInstance();
         result.sort((a, b) -> {
-            AppEntry left = apps.get(a), right = apps.get(b);
+            AppEntry left = AppEntry.resolve(a, apps, follow), right = AppEntry.resolve(b, apps, follow);
             String leftLabel = left == null ? new AppEntry(a).label : left.label;
             String rightLabel = right == null ? new AppEntry(b).label : right.label;
             int c = collator.compare(leftLabel, rightLabel);
@@ -247,7 +259,7 @@ final class FolderRow extends FrameLayout {
             circle.setShape(android.graphics.drawable.GradientDrawable.OVAL); circle.setColor(Ui.surface(getContext()));
             preview.setBackground(circle); preview.setClipToOutline(true);
             if (single && normalization > 0) preview.setTranslationY(-(stockIconSize - previewSize) / 2f);
-            List<String> appKeys = sortedApps(folder, apps);
+            List<String> appKeys = sortedApps(folder, apps, followChanges);
             for (int i = 0; i < 4; i++) {
                 ImageView icon = new ImageView(getContext());
                 if (i < appKeys.size()) {
@@ -286,7 +298,7 @@ final class FolderRow extends FrameLayout {
     private void dismissFolderPopup() {
         LauncherDrag drag = homeDrag; homeDrag = null;
         if (drag != null) drag.cancel();
-        PopupWindow popup = folderPopup; folderPopup = null;
+        PopupWindow popup = folderPopup; folderPopup = null; popupFolderId = null;
         if (popup != null) popup.dismiss();
     }
 
@@ -302,7 +314,7 @@ final class FolderRow extends FrameLayout {
         }
         if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) {
             homeDrag = null; // UP already completed the drop; do not cancel its animation.
-            dismissFolderPopup();
+            dismissFolderPopup(); refresh();
         }
         return true;
     }
@@ -322,9 +334,9 @@ final class FolderRow extends FrameLayout {
         panel.addView(Ui.secondary(context, (folder.profile.equals("work") ? "Work" : "Personal") + " · " + folder.apps.size()
                 + (folder.apps.size() == 1 ? " app" : " apps"), 14)); panel.addView(Ui.spacer(context, 16));
         ScrollView scroll = new ScrollView(context); GridLayout grid = new GridLayout(context); grid.setColumnCount(columns); scroll.addView(grid);
-        List<String> keys = sortedApps(folder, apps);
+        List<String> keys = sortedApps(folder, apps, followChanges);
         for (int i = 0; i < keys.size(); i++) {
-            String key = keys.get(i); AppEntry app = entry(key);
+            AppEntry app = entry(keys.get(i)); String key = app.key;
             LinearLayout item = Ui.column(context, 8); item.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
             item.setMinimumHeight(Ui.dp(context, 104 * scale)); item.setBackground(Ui.ripple(context, android.graphics.Color.TRANSPARENT, 16));
             ImageView icon = new ImageView(context); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -402,7 +414,7 @@ final class FolderRow extends FrameLayout {
         popup.setOnDismissListener(() -> { if (folderPopup == popup) dismissFolderPopup(); });
         // A floating taskbar drawer has a window context, not an Activity.
         // Attach to the existing drawer token instead of creating a dialog.
-        try { folderPopup = popup; popup.showAtLocation(anchor, Gravity.CENTER, 0, 0); }
+        try { folderPopup = popup; popupFolderId = folder.id; popup.showAtLocation(anchor, Gravity.CENTER, 0, 0); }
         catch (RuntimeException error) {
             dismissFolderPopup(); android.util.Log.e("PixelLauncherFolders", "Could not attach folder popup", error);
             Toast.makeText(context, "Could not open this folder", Toast.LENGTH_SHORT).show();

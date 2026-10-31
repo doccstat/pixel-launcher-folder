@@ -149,7 +149,7 @@ public final class MainActivity extends Activity {
         int padding = Ui.dp(this, 8); preview.setPadding(padding, padding, padding, padding);
         Map<String, AppEntry> profileIcons = new HashMap<>();
         for (String key : folder.apps) { AppEntry app = icons.get(folder.profile + ":" + folder.serial + ":" + key); if (app != null) profileIcons.put(key, app); }
-        List<String> sorted = FolderRow.sortedApps(folder, profileIcons);
+        List<String> sorted = FolderRow.sortedApps(folder, profileIcons, false);
         for (int i = 0; i < 4; i++) {
             ImageView icon = new ImageView(this); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
             if (i < sorted.size()) { AppEntry app = profileIcons.get(sorted.get(i)); if (app != null) try { icon.setImageDrawable(app.icon(this)); } catch (RuntimeException ignored) { } }
@@ -163,14 +163,24 @@ public final class MainActivity extends Activity {
 
     private void loadIcons() {
         final int generation = ++iconGeneration;
+        final boolean follow;
+        try { follow = Folders.followAppChanges(Folders.read(this)); }
+        catch (Exception error) { message(error.getMessage()); return; }
         List<Folders.Folder> snapshot = new ArrayList<>(folders);
         FolderRow.IO.execute(() -> {
             Map<String, AppEntry> loaded = new HashMap<>(); Set<String> groups = new HashSet<>();
             for (Folders.Folder folder : snapshot) {
                 String group = folder.profile + ":" + folder.serial;
                 if (!groups.add(group)) continue;
-                try { for (AppEntry entry : AppEntry.list(this, folder.profile, folder.serial)) loaded.put(group + ":" + entry.key, entry); }
-                catch (RuntimeException ignored) { }
+                try {
+                    Map<String, AppEntry> available = AppEntry.index(AppEntry.list(this, folder.profile, folder.serial));
+                    for (Folders.Folder member : snapshot) if (group.equals(member.profile + ":" + member.serial)) {
+                        for (String key : member.apps) {
+                            AppEntry entry = AppEntry.resolve(key, available, follow);
+                            if (entry != null) loaded.put(group + ":" + key, entry);
+                        }
+                    }
+                } catch (RuntimeException ignored) { }
             }
             runOnUiThread(() -> { if (!isFinishing() && !isDestroyed() && generation == iconGeneration) {
                 icons.clear(); icons.putAll(loaded); if (!settings) render();
@@ -198,6 +208,13 @@ public final class MainActivity extends Activity {
         try { keep.setChecked(Folders.keepInDrawer(Folders.read(this))); } catch (Exception e) { message(e.getMessage()); }
         keep.setOnCheckedChangeListener((button, checked) -> { try { Folders.setKeepInDrawer(this, checked); } catch (Exception e) { message(e.getMessage()); render(); } });
         body.addView(keep); body.addView(Ui.secondary(this, "When off, assigned apps appear only in their folders. Launcher search still finds them.", 14));
+        Switch follow = new Switch(this); follow.setText("Follow app icon/name changes"); follow.setTextColor(Ui.text(this)); follow.setTextSize(16); follow.setMinHeight(Ui.dp(this, 56));
+        try { follow.setChecked(Folders.followAppChanges(Folders.read(this))); } catch (Exception e) { message(e.getMessage()); }
+        follow.setOnCheckedChangeListener((button, checked) -> {
+            try { Folders.setFollowAppChanges(this, checked); loadIcons(); }
+            catch (Exception e) { message(e.getMessage()); render(); }
+        });
+        body.addView(follow); body.addView(Ui.secondary(this, "On by default. If a saved app entry disappears, use its only current entry in the same profile. Multiple entries need a choice in Choose apps. Off keeps exact entries. Following changes does not rewrite assignments.", 14));
         body.addView(Ui.spacer(this, 28)); body.addView(Ui.sectionTitle(this, "Backup & restore")); body.addView(Ui.spacer(this, 12));
         Uri tree = Folders.backupTree(this);
         body.addView(Ui.text(this, tree == null ? "Keep a copy in Files" : "Backup folder connected", 20)); body.addView(Ui.spacer(this, 8));
@@ -251,7 +268,7 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Replace folder assignments?")
                 .setMessage("Import reads your selected backup folder. Current assignments are replaced; installed apps are never changed.")
                 .setNegativeButton("Cancel", null).setPositiveButton("Import", (d, w) -> {
-                    try { Folders.ImportResult imported = Folders.importTree(this); Folders.save(this, imported.folders, imported.keep);
+                    try { Folders.ImportResult imported = Folders.importTree(this); Folders.save(this, imported.folders, imported.keep, imported.follow);
                         folders = imported.folders; render(); loadIcons(); message(imported.skipped == 0 ? "Folders imported" : "Folders imported; unavailable profiles were skipped"); }
                     catch (Exception error) { message("Import failed: " + error.getMessage()); }
                 }).show();
@@ -325,9 +342,11 @@ public final class MainActivity extends Activity {
 
     private void pickApps(Set<String> selected, Profiles profile, Folders.Folder current, Runnable done) {
         final List<AppEntry> all;
-        try { all = AppEntry.list(this, profile.kind, profile.serial); } catch (RuntimeException e) { message(e.getMessage()); return; }
-        HashSet<String> available = new HashSet<>(); for (AppEntry app : all) available.add(app.key);
-        for (String missing : selected) if (!available.contains(missing)) all.add(new AppEntry(missing));
+        final boolean follow;
+        try { all = AppEntry.list(this, profile.kind, profile.serial); follow = Folders.followAppChanges(Folders.read(this)); }
+        catch (Exception e) { message(e.getMessage()); return; }
+        Map<String, AppEntry> available = AppEntry.index(all);
+        for (String missing : selected) if (AppEntry.resolve(missing, available, follow) == null) all.add(new AppEntry(missing));
         Set<String> draft = new LinkedHashSet<>(selected); List<AppEntry> visible = new ArrayList<>(all);
         LinearLayout panel = Ui.column(this, 20);
         panel.addView(Ui.text(this, profileName(profile.kind) + " apps", 24)); panel.addView(Ui.spacer(this, 8));
@@ -339,8 +358,8 @@ public final class MainActivity extends Activity {
             @Override public Object getItem(int pos) { return visible.get(pos); }
             @Override public long getItemId(int pos) { return pos; }
             @Override public View getView(int pos, View recycled, ViewGroup parent) {
-                AppEntry entry = visible.get(pos); boolean checked = draft.contains(entry.key);
-                boolean elsewhere = Folders.assignedElsewhere(folders, current, profile.kind, profile.serial, Profiles.personalSerial(MainActivity.this), entry.key);
+                AppEntry entry = visible.get(pos); boolean checked = AppResolver.contains(draft, entry.key, available.keySet(), follow);
+                boolean elsewhere = Folders.assignedElsewhere(folders, current, profile.kind, profile.serial, Profiles.personalSerial(MainActivity.this), entry.key, available.keySet(), follow);
                 LinearLayout row = recycled instanceof LinearLayout ? (LinearLayout) recycled : new LinearLayout(MainActivity.this);
                 row.removeAllViews(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 12), Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 12)); row.setMinimumHeight(Ui.dp(MainActivity.this, 64));
                 ImageView icon = new ImageView(MainActivity.this); try { icon.setImageDrawable(entry.icon(MainActivity.this)); } catch (RuntimeException ignored) { }
@@ -358,7 +377,10 @@ public final class MainActivity extends Activity {
         list.setAdapter(adapter); TextView empty = Ui.secondary(this, "No matching apps", 15); empty.setGravity(Gravity.CENTER); empty.setPadding(0, Ui.dp(this, 24), 0, Ui.dp(this, 24));
         list.setEmptyView(empty);
         list.setOnItemClickListener((p, v, pos, id) -> {
-            String key = visible.get(pos).key; if (!draft.remove(key)) { if (draft.size() >= Folders.MAX_APPS) { message("Use at most 100 apps per folder"); return; } draft.add(key); }
+            String key = visible.get(pos).key;
+            if (!draft.removeIf(saved -> key.equals(saved) || key.equals(AppResolver.resolve(saved, available.keySet(), follow)))) {
+                if (draft.size() >= Folders.MAX_APPS) { message("Use at most 100 apps per folder"); return; } draft.add(key);
+            }
             count.setText(appCount(draft.size()) + " selected"); adapter.notifyDataSetChanged();
         });
         search.addTextChangedListener(new TextWatcher() {
