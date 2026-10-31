@@ -35,6 +35,16 @@ scope if an update causes problems.
 3. Scope it only to `com.google.android.apps.nexuslauncher`.
 4. Restart Pixel Launcher and open the Pixel Launcher Folders settings app.
 
+## App icon and name changes
+
+Folders refresh when Android reports an app change, including an open folder.
+**Settings → Follow app icon/name changes** is on by default: the saved launcher
+entry is preferred, but if it disappears, the app's only current entry in the
+same profile is used for its icon, name, launch, drag, and folder-only filtering.
+Following a replacement does not rewrite assignments. Turn this off to require
+exact entries. If an app has several possible replacement entries, it remains unavailable;
+use **Choose apps** to remove the old entry and select the intended one.
+
 ## Backup and restore
 
 Choose a folder through Android's document picker. Export writes editable text
