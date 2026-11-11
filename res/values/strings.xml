@@ -1,0 +1,21 @@
+<resources>
+    <string name="hide_unavailable">Hide unavailable apps</string>
+    <string name="hide_unavailable_summary">Keep assignments so apps reappear when available. Turn off to show unavailable entries.</string>
+    <string name="remove_unavailable">Remove unavailable assignments…</string>
+    <string name="remove_unavailable_title">Remove these assignments?</string>
+    <string name="remove_unavailable_summary">These entries will be removed from your folders and connected backup. Reinstalling an app will not restore its assignment.\n\n%1$s</string>
+    <string name="remove_unavailable_confirm">Remove assignments</string>
+    <string name="remove_unavailable_done">Unavailable assignments removed</string>
+    <string name="no_unavailable">No unavailable assignments</string>
+    <string name="cleanup_changed">Folders or app availability changed. Review the entries again.</string>
+    <string name="cleanup_failed">Could not check all folders. Unlock or resume their profiles and try again.</string>
+    <string name="operation_failed">Could not complete the operation</string>
+    <string name="no_available_apps">No available apps</string>
+    <string name="empty_folder">No apps yet. Choose apps in folder settings.</string>
+    <string name="export_diagnostics">Export diagnostics</string>
+    <string name="diagnostics_saved">Diagnostics exported</string>
+    <plurals name="app_count">
+        <item quantity="one">%1$d app</item>
+        <item quantity="other">%1$d apps</item>
+    </plurals>
+</resources>

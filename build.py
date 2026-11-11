@@ -11,6 +11,30 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent
+PACKAGE = "com.lixingchi.pixellauncherfolder"
+TEST_PACKAGE = PACKAGE + ".test"
+
+
+def test_manifest(source):
+    prefix = "{http://schemas.android.com/apk/res/android}"
+    ET.register_namespace("android", prefix[1:-1])
+    tree = ET.parse(source)
+    for element in tree.iter():
+        for name, value in list(element.attrib.items()):
+            element.set(name, value.replace(PACKAGE, TEST_PACKAGE))
+    application = tree.getroot().find("application")
+    application.set(prefix + "label", "Pixel Launcher Folders Tests")
+    for metadata in list(application.findall("meta-data")):
+        if metadata.get(prefix + "name", "").startswith("xposed"):
+            application.remove(metadata)
+    ET.SubElement(tree.getroot(), "instrumentation", {
+        prefix + "name": TEST_PACKAGE + ".FolderTests", prefix + "targetPackage": TEST_PACKAGE})
+    ET.SubElement(application, "provider", {
+        prefix + "name": TEST_PACKAGE + ".BackupDocuments",
+        prefix + "authorities": TEST_PACKAGE + ".backup-tests",
+        prefix + "exported": "true", prefix + "grantUriPermissions": "true",
+        prefix + "permission": "android.permission.MANAGE_DOCUMENTS"})
+    return tree
 
 
 def certificate_digest(value):
@@ -22,7 +46,7 @@ def certificate_digest(value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--test", action="store_true", help="Include our instrumentation runner in this APK")
+    parser.add_argument("--test", action="store_true", help="Build an isolated .test app with instrumentation; never replaces the module")
     parser.add_argument("--release", action="store_true", help="Require an existing explicitly configured signing key")
     args = parser.parse_args()
     if args.release and args.test:
@@ -77,25 +101,28 @@ def main():
     sources = sorted((ROOT / "src").rglob("*.java")) + sorted((ROOT / "stubs").rglob("*.java"))
     if args.test:
         sources += sorted((ROOT / "tests").rglob("*.java"))
+        generated = []
+        for source in sources:
+            target = build / "test-src" / source.relative_to(ROOT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source.read_text(encoding="utf-8").replace(PACKAGE, TEST_PACKAGE), encoding="utf-8")
+            generated.append(target)
+        sources = generated
     run(jtool("javac"), "-source", "8", "-target", "8", "-cp", android, "-d", build / "classes", *sources)
     run(tool("d8"), "--classpath", android, "--classpath", build / "classes", "--min-api", "30",
         "--output", build / "dex", *sorted((build / "classes/com/lixingchi").rglob("*.class")))
     run(tool("aapt2"), "compile", "--dir", ROOT / "res", "-o", build / "resources.zip")
     manifest = ROOT / "AndroidManifest.xml"
     if args.test:
-        ET.register_namespace("android", "http://schemas.android.com/apk/res/android")
-        tree = ET.parse(manifest)
-        prefix = "{http://schemas.android.com/apk/res/android}"
-        ET.SubElement(tree.getroot(), "instrumentation", {
-            prefix + "name": "com.lixingchi.pixellauncherfolder.FolderTests",
-            prefix + "targetPackage": "com.lixingchi.pixellauncherfolder"})
+        tree = test_manifest(manifest)
         manifest = build / "AndroidManifest.xml"
         tree.write(manifest, encoding="utf-8", xml_declaration=True)
     run(tool("aapt2"), "link", "-o", build / "unsigned.apk", "-I", android,
         "--manifest", manifest, build / "resources.zip")
     with zipfile.ZipFile(build / "unsigned.apk", "a", compression=zipfile.ZIP_DEFLATED) as apk:
         apk.write(build / "dex/classes.dex", "classes.dex")
-        apk.write(ROOT / "assets/xposed_init", "assets/xposed_init")
+        if not args.test:
+            apk.write(ROOT / "assets/xposed_init", "assets/xposed_init")
     run(tool("zipalign"), "-f", "4", build / "unsigned.apk", build / "aligned.apk")
     if not key.exists():
         if args.release:

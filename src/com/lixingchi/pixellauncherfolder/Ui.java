@@ -30,6 +30,24 @@ final class Ui {
         catch (RuntimeException ignored) { return fallback; }
     }
 
+    private static android.content.res.Resources strings(Context context) {
+        if (Folders.PACKAGE.equals(context.getPackageName())) return context.getResources();
+        try {
+            return context.createPackageContext(Folders.PACKAGE, 0)
+                    .createConfigurationContext(context.getResources().getConfiguration()).getResources();
+        } catch (android.content.pm.PackageManager.NameNotFoundException error) {
+            throw new IllegalStateException("Folder resources unavailable", error);
+        }
+    }
+    static String string(Context context, String name, Object... args) {
+        android.content.res.Resources resources = strings(context);
+        return resources.getString(resources.getIdentifier(name, "string", Folders.PACKAGE), args);
+    }
+    static String appCount(Context context, int count) {
+        android.content.res.Resources resources = strings(context);
+        return resources.getQuantityString(resources.getIdentifier("app_count", "plurals", Folders.PACKAGE), count, count);
+    }
+
     static int dp(Context c, float v) { return Math.round(c.getResources().getDisplayMetrics().density * v); }
     static boolean dark(Context c) { return (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES; }
     static int background(Context c) {

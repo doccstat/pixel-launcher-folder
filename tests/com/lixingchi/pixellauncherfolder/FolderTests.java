@@ -64,6 +64,12 @@ public final class FolderTests extends Instrumentation {
             return (android.widget.PopupWindow) field.get(row);
         } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
     }
+    private android.app.AlertDialog cleanupDialog(Activity activity) {
+        try {
+            java.lang.reflect.Field field = MainActivity.class.getDeclaredField("cleanupDialog"); field.setAccessible(true);
+            return (android.app.AlertDialog) field.get(activity);
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+    }
     @Override public void onStart() {
         Context context = getTargetContext();
         if ("inspect".equals(mode) || "repair".equals(mode)) {
@@ -213,6 +219,17 @@ public final class FolderTests extends Instrumentation {
             check(!Folders.keepInDrawer(Folders.read(context)), "App-change setting preserves drawer option");
             Folders.setKeepInDrawer(context, true);
             reject("{\"version\":1,\"followAppChanges\":\"false\",\"folders\":[]}");
+            check(Folders.hideUnavailable("{\"version\":1,\"folders\":[]}"), "Legacy configs default to hiding unavailable apps");
+            Folders.setHideUnavailable(context, false); Folders.save(context, normalized);
+            Folders.setFollowAppChanges(context, false); Folders.setKeepInDrawer(context, false);
+            check(!Folders.hideUnavailable(Folders.read(context)), "Folder edits and other switches preserve show-unavailable choice");
+            Folders.setHideUnavailable(context, true);
+            check(!Folders.keepInDrawer(Folders.read(context)) && !Folders.followAppChanges(Folders.read(context)), "Hide choice preserves other settings");
+            check(Folders.parse(Folders.read(context)).get(0).apps.equals(normalized.get(0).apps), "Hiding never removes assignments");
+            Folders.setFollowAppChanges(context, true); Folders.setKeepInDrawer(context, true);
+            reject("{\"version\":1,\"hideUnavailable\":\"false\",\"folders\":[]}");
+            reject("{\"version\":1,\"hideUnavailable\":null,\"folders\":[]}");
+            check(!Folders.hideUnavailable(Folders.encode(normalized, true, true, false)), "Explicit hide choice round trips");
             long owner = Profiles.personalSerial(context);
             String component = normalized.get(0).apps.get(0);
             List<Folders.Folder> isolated = Arrays.asList(Folders.Folder.create("Work", "work", 100, Arrays.asList(component)));
@@ -228,7 +245,7 @@ public final class FolderTests extends Instrumentation {
             labels.put("z.pkg/.Z", new AppEntry("z.pkg/.Z"));
             labels.put("a.pkg/.A", new AppEntry("a.pkg/.A"));
             labels.put("m.pkg/.M", new AppEntry("m.pkg/.M"));
-            check(FolderRow.sortedApps(order, labels, true).get(0).equals("a.pkg/.A"), "Folder apps sort by label");
+            check(FolderRow.sortedApps(order, labels, true, false).get(0).equals("a.pkg/.A"), "Folder apps sort by label");
             AppEntry installed = AppEntry.list(context).stream().filter(e -> e.key.equals(component)).findFirst().get();
             java.util.Map<String, AppEntry> availableApps = AppEntry.index(Arrays.asList(installed));
             String oldAlias = Folders.PACKAGE + "/" + Folders.PACKAGE + ".OldIcon";
@@ -239,6 +256,59 @@ public final class FolderTests extends Instrumentation {
             check(!Folders.shouldHide(false, Arrays.asList(changing), "work", owner, owner, installed.key, availableApps.keySet(), true), "Alias following cannot cross profile kinds");
             check(Folders.assignedElsewhere(Arrays.asList(changing), null, "personal", owner, owner, installed.key, availableApps.keySet(), true), "Picker sees alias membership in another folder");
             check(changing.apps.equals(Arrays.asList(oldAlias)), "Resolution never rewrites saved assignments");
+            check(FolderRow.sortedApps(changing, availableApps, true, true).equals(changing.apps), "Unique replacement stays visible");
+            check(FolderRow.sortedApps(changing, availableApps, false, true).isEmpty(), "Exact-entry mode hides missing aliases");
+            check(FolderRow.sortedApps(changing, java.util.Collections.emptyMap(), true, true).isEmpty(), "Missing app hidden from sorted preview and popup keys");
+            check(FolderRow.sortedApps(changing, java.util.Collections.emptyMap(), true, false).equals(changing.apps), "Show option retains placeholder keys");
+            check(changing.apps.equals(Arrays.asList(oldAlias)), "Filtering never mutates saved entries");
+            String missing = "missing.example/missing.example.Main";
+            Folders.Folder mixed = Folders.Folder.create("Private folder name", Arrays.asList(oldAlias, missing));
+            List<Folders.Folder> cleaned = Folders.withoutUnavailable(context, Arrays.asList(mixed), true);
+            check(cleaned.get(0).apps.equals(Arrays.asList(oldAlias)), "Explicit cleanup keeps resolved aliases and removes missing assignments");
+            check(cleaned.get(0).id.equals(mixed.id) && mixed.apps.size() == 2, "Cleanup preserves folder identity and input");
+            check(Folders.withoutUnavailable(context, Arrays.asList(mixed), false).get(0).apps.isEmpty(), "Cleanup respects exact-entry choice and retains empty folders");
+            try { Folders.withoutUnavailable(context, isolated, true); throw new AssertionError("Unavailable profile treated as empty inventory"); }
+            catch (IllegalStateException expected) { checks++; }
+            check(Folders.restoreApps(Arrays.asList("missing.example"), Arrays.asList(missing), new ArrayList<>()).equals(Arrays.asList(missing)), "Package-name backups retain missing saved components");
+            check(Folders.restoreApps(Arrays.asList(Folders.PACKAGE), Arrays.asList(oldAlias), Arrays.asList(installed)).equals(Arrays.asList(oldAlias)), "Backup round trip preserves alias identity");
+            check(Folders.restoreApps(Arrays.asList(Folders.PACKAGE), new ArrayList<>(), Arrays.asList(installed)).equals(Arrays.asList(installed.key)), "Legacy package-only backups resolve available apps");
+            check(Folders.restoreApps(Arrays.asList(missing), new ArrayList<>(), new ArrayList<>()).equals(Arrays.asList(missing)), "Explicit absent backup component retained");
+            check(Folders.restoreApps(new ArrayList<>(), Arrays.asList(missing), new ArrayList<>()).isEmpty(), "Deleting a backup text line removes its assignment");
+            Folders.save(context, Arrays.asList(mixed));
+            String diagnostic = Diagnostics.collect(context).toString();
+            check(diagnostic.contains("hideUnavailable") && diagnostic.contains("unavailableAssignments"), "Diagnostic export includes configuration and inventory results");
+            check(!diagnostic.contains(mixed.name) && !diagnostic.contains(missing) && !diagnostic.contains(oldAlias), "Diagnostic export excludes folder names and app assignments");
+            android.net.Uri testTree = android.provider.DocumentsContract.buildTreeDocumentUri(Folders.PACKAGE + ".backup-tests", "root");
+            Folders.setBackupTree(context, testTree);
+            Folders.save(context, Arrays.asList(mixed), false, true, false);
+            Folders.ImportResult imported = Folders.importTree(context);
+            check(!imported.keep && imported.follow && !imported.hide, "SAF manifest round trips all display options");
+            check(imported.folders.get(0).apps.equals(mixed.apps), "SAF round trip preserves missing apps and exact aliases");
+            Folders.synchronizeFromBackup(context);
+            check(Folders.parse(Folders.read(context)).get(0).apps.equals(mixed.apps), "Settings startup sync retains hidden assignments");
+            android.net.Uri manifestUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(testTree, ".pixel-launcher-folders.json");
+            org.json.JSONObject legacy;
+            try (java.io.InputStream input = context.getContentResolver().openInputStream(manifestUri)) {
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                byte[] buffer = new byte[4096]; int count;
+                while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count);
+                legacy = new org.json.JSONObject(bytes.toString("UTF-8"));
+            }
+            legacy.remove("hideUnavailable"); legacy.getJSONArray("folders").getJSONObject(0).remove("apps");
+            try (java.io.OutputStream output = context.getContentResolver().openOutputStream(manifestUri, "wt")) {
+                output.write(legacy.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            imported = Folders.importTree(context);
+            check(imported.hide && imported.folders.get(0).apps.equals(mixed.apps), "Legacy connected backup preserves local missing entries and defaults to hiding");
+            legacy.getJSONArray("folders").getJSONObject(0).put("profile", "work").put("serial", 999999);
+            try (java.io.OutputStream output = context.getContentResolver().openOutputStream(manifestUri, "wt")) {
+                output.write(legacy.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            String beforeSync = Folders.read(context);
+            Folders.synchronizeFromBackup(context);
+            check(beforeSync.equals(Folders.read(context)), "Unavailable backup profile cannot erase local folders during sync");
+            preferences.edit().remove("backup_tree").commit();
+            Folders.save(context, normalized, true, true, true);
             runOnMainSync(() -> {
                 for (boolean night : new boolean[]{false, true}) {
                     Configuration config = new Configuration(context.getResources().getConfiguration());
@@ -270,6 +340,11 @@ public final class FolderTests extends Instrumentation {
                     MainActivity.membershipIndicator(themed, indicator, true, true);
                     check(indicator.isChecked() && indicator.getButtonTintList().getDefaultColor() == Ui.pickerActive(themed),
                             "Current-folder selection takes precedence over other-folder membership");
+                    Context launcherResources = new android.content.ContextWrapper(themed) {
+                        @Override public String getPackageName() { return Folders.LAUNCHER; }
+                    };
+                    check(Ui.string(launcherResources, "hide_unavailable").equals(Ui.string(themed, "hide_unavailable")),
+                            "Hooked launcher resolves module-owned strings rather than launcher resource IDs");
                 }
             });
             reject("{\"version\":1,\"folders\":[{\"id\":\"a\",\"name\":\"A\",\"profile\":\"private\",\"serial\":11,\"apps\":[]}]}");
@@ -295,7 +370,50 @@ public final class FolderTests extends Instrumentation {
             runOnMainSync(() -> {
                 check(find(screen.getWindow().getDecorView(), "Keep folder apps in All apps") != null, "Display option rendered");
                 check(find(screen.getWindow().getDecorView(), "Follow app icon/name changes") != null, "App-change choice is visible");
+                android.widget.Switch hide = (android.widget.Switch) find(screen.getWindow().getDecorView(), Ui.string(context, "hide_unavailable"));
+                check(hide != null && hide.isChecked(), "Hide-unavailable setting is visible and defaults on");
+                hide.setChecked(false);
+                try { check(!Folders.hideUnavailable(Folders.read(context)), "Settings switch persists show choice"); }
+                catch (Exception error) { throw new AssertionError(error); }
+                hide.setChecked(true);
+                check(find(screen.getWindow().getDecorView(), Ui.string(context, "remove_unavailable")) != null, "Explicit cleanup action is in Settings");
+                check(find(screen.getWindow().getDecorView(), Ui.string(context, "export_diagnostics")) != null, "Diagnostic export is accessible");
+                Configuration expanded = new Configuration(context.getResources().getConfiguration());
+                expanded.fontScale = 1.5f; expanded.setLocale(new java.util.Locale("ar"));
+                Context rtl = context.createConfigurationContext(expanded);
+                check(rtl.getResources().getConfiguration().getLayoutDirection() == View.LAYOUT_DIRECTION_RTL, "RTL configuration supported");
+                check(!Ui.appCount(rtl, 15).isEmpty() && Ui.string(rtl, "hide_unavailable").equals("Hide unavailable apps"), "English resource fallback and locale-aware counts work");
+                android.widget.Switch longLabel = new android.widget.Switch(rtl);
+                longLabel.setText(Ui.string(rtl, "hide_unavailable") + " " + Ui.string(rtl, "hide_unavailable"));
+                longLabel.measure(View.MeasureSpec.makeMeasureSpec(Ui.dp(rtl, 280), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                check(longLabel.getMeasuredHeight() >= longLabel.getLineHeight() * longLabel.getLineCount(), "Expanded switch label has room to wrap");
             });
+            Folders.save(context, Arrays.asList(mixed));
+            String cleanupBefore = Folders.read(context);
+            runOnMainSync(() -> find(screen.getWindow().getDecorView(), Ui.string(context, "remove_unavailable")).performClick());
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            runOnMainSync(() -> {
+                android.app.AlertDialog dialog = cleanupDialog(screen);
+                check(dialog != null && dialog.isShowing(), "Cleanup requires a confirmation dialog");
+                TextView text = dialog.findViewById(android.R.id.message);
+                check(text.getText().toString().contains(missing) && !text.getText().toString().contains(oldAlias), "Confirmation lists only unresolved assignments");
+                dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).performClick();
+            });
+            check(cleanupBefore.equals(Folders.read(context)), "Cancelling cleanup preserves assignments");
+            runOnMainSync(() -> find(screen.getWindow().getDecorView(), Ui.string(context, "remove_unavailable")).performClick());
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            Folders.setHideUnavailable(context, false);
+            String changedDuringReview = Folders.read(context);
+            runOnMainSync(() -> cleanupDialog(screen).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick());
+            waitForIdleSync(); FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            check(changedDuringReview.equals(Folders.read(context)), "Stale confirmation cannot overwrite changed settings");
+            runOnMainSync(() -> find(screen.getWindow().getDecorView(), Ui.string(context, "remove_unavailable")).performClick());
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            runOnMainSync(() -> cleanupDialog(screen).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick());
+            waitForIdleSync(); FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            check(Folders.parse(Folders.read(context)).get(0).apps.equals(Arrays.asList(oldAlias)), "Confirmed cleanup saves exactly the reviewed removal");
+            check(!Folders.hideUnavailable(Folders.read(context)), "Cleanup preserves visibility choice");
+            Folders.save(context, normalized, true, true, true);
             // Exercise the actual row independently of Vector. Draw only our view,
             // including when the lockscreen covers the Activity.
             final FolderRow[] preview = new FolderRow[1];
@@ -384,7 +502,7 @@ public final class FolderTests extends Instrumentation {
                 } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
             });
             // Same adapter row, same folder ID: changing app metadata must refresh both the row and open popup.
-            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), new ArrayList<>(), true, true));
+            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), new ArrayList<>(), true, true, true));
             runOnMainSync(() -> {
                 preview[0] = new FolderRow(screen, "personal", owner, true, true);
                 preview[0].bindFolderIndex(0); screen.setContentView(preview[0]);
@@ -392,9 +510,16 @@ public final class FolderTests extends Instrumentation {
             waitForIdleSync(); FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
             runOnMainSync(() -> {
                 ((View) find(preview[0], "Changing").getParent()).performClick();
-                check(find(popup(preview[0]).getContentView(), "Unavailable") != null, "Missing alias initially displays unavailable");
+                check(find(popup(preview[0]).getContentView(), "Unavailable") == null, "Missing alias is hidden by default");
+                check(find(popup(preview[0]).getContentView(), Ui.string(context, "no_available_apps")) != null, "All-missing folder remains openable with an empty state");
+                check(find(popup(preview[0]).getContentView(), "Personal · " + Ui.appCount(context, 0)) != null, "Popup count excludes hidden entries");
+                check(((View) find(preview[0], "Changing").getParent()).getContentDescription().toString().endsWith(Ui.appCount(context, 0)), "Accessible preview count excludes hidden entries");
             });
-            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), Arrays.asList(installed), true, true));
+            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), new ArrayList<>(), true, true, false));
+            runOnMainSync(() -> FolderRow.refreshAttached(preview[0]));
+            FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
+            runOnMainSync(() -> check(find(popup(preview[0]).getContentView(), "Unavailable") != null, "Changing hide option refreshes an open popup"));
+            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), Arrays.asList(installed), true, true, true));
             runOnMainSync(() -> FolderRow.refreshAttached(screen.getWindow().getDecorView()));
             FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
             runOnMainSync(() -> {
@@ -402,7 +527,7 @@ public final class FolderTests extends Instrumentation {
                 check(find(popup(preview[0]).getContentView(), installed.label) != null, "Open popup receives current app label without settings or adapter rebind");
                 check(find(popup(preview[0]).getContentView(), "Unavailable") == null, "Unavailable placeholder is removed");
             });
-            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), Arrays.asList(installed), true, false));
+            FolderRow.cache("personal", owner, new FolderRow.Snapshot(Arrays.asList(changing), Arrays.asList(installed), true, false, false));
             runOnMainSync(() -> FolderRow.refreshAttached(preview[0]));
             FolderRow.IO.submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS); waitForIdleSync();
             runOnMainSync(() -> {
@@ -414,6 +539,8 @@ public final class FolderTests extends Instrumentation {
         } catch (Throwable error) {
             code = Activity.RESULT_CANCELED; result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(error));
         } finally {
+            java.io.File[] testFiles = new java.io.File(context.getCacheDir(), "backup-tests").listFiles();
+            if (testFiles != null) for (java.io.File testFile : testFiles) testFile.delete();
             FolderRow.invalidate("personal", ownerSerial(context));
             android.content.SharedPreferences.Editor edit = preferences.edit();
             if (existed) edit.putString("json", original); else edit.remove("json");

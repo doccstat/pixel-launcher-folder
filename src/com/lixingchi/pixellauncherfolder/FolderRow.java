@@ -39,9 +39,9 @@ final class FolderRow extends FrameLayout {
     static final class Snapshot {
         final List<Folders.Folder> folders;
         final Map<String, AppEntry> apps;
-        final boolean keep, follow;
-        Snapshot(List<Folders.Folder> folders, List<AppEntry> entries, boolean keep, boolean follow) {
-            this.folders = folders; this.apps = AppEntry.index(entries); this.keep = keep; this.follow = follow;
+        final boolean keep, follow, hide;
+        Snapshot(List<Folders.Folder> folders, List<AppEntry> entries, boolean keep, boolean follow, boolean hide) {
+            this.folders = folders; this.apps = AppEntry.index(entries); this.keep = keep; this.follow = follow; this.hide = hide;
         }
     }
     static Snapshot load(Context context, boolean live, String profile, long serial) throws Exception {
@@ -54,7 +54,7 @@ final class FolderRow extends FrameLayout {
         } else raw = Folders.read(context);
         List<Folders.Folder> folders = Folders.parse(raw);
         List<AppEntry> entries = folders.isEmpty() ? java.util.Collections.emptyList() : AppEntry.list(context, profile, serial);
-        return new Snapshot(folders, entries, Folders.keepInDrawer(raw), Folders.followAppChanges(raw));
+        return new Snapshot(folders, entries, Folders.keepInDrawer(raw), Folders.followAppChanges(raw), Folders.hideUnavailable(raw));
     }
     private static String cacheKey(String profile, long serial) { return profile + ":" + serial; }
     static void cache(String profile, long serial, Snapshot snapshot) {
@@ -83,7 +83,7 @@ final class FolderRow extends FrameLayout {
     private final Typeface stockTypeface;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, AppEntry> apps = new HashMap<>();
-    private boolean attached, loading, reload, followChanges = true;
+    private boolean attached, loading, reload, followChanges = true, hideUnavailable = true;
     private Snapshot lastSnapshot;
     private String profile;
     private long serial;
@@ -193,7 +193,7 @@ final class FolderRow extends FrameLayout {
                 final Snapshot result = snapshot; final List<Folders.Folder> visible = folders;
                 main.post(() -> {
                     if (attached && readGeneration == generation && result != lastSnapshot && homeDrag == null) {
-                        lastSnapshot = result; followChanges = result.follow;
+                        lastSnapshot = result; followChanges = result.follow; hideUnavailable = result.hide;
                         apps.clear(); apps.putAll(result.apps);
                         render(visible);
                         if (folderPopup != null) {
@@ -224,8 +224,9 @@ final class FolderRow extends FrameLayout {
     }
     private AppEntry entry(String key) { AppEntry e = AppEntry.resolve(key, apps, followChanges); return e == null ? new AppEntry(key) : e; }
 
-    static List<String> sortedApps(Folders.Folder folder, Map<String, AppEntry> apps, boolean follow) {
+    static List<String> sortedApps(Folders.Folder folder, Map<String, AppEntry> apps, boolean follow, boolean hide) {
         List<String> result = new ArrayList<>(folder.apps);
+        if (hide) result.removeIf(key -> AppEntry.resolve(key, apps, follow) == null);
         Collator collator = Collator.getInstance();
         result.sort((a, b) -> {
             AppEntry left = AppEntry.resolve(a, apps, follow), right = AppEntry.resolve(b, apps, follow);
@@ -259,7 +260,7 @@ final class FolderRow extends FrameLayout {
             circle.setShape(android.graphics.drawable.GradientDrawable.OVAL); circle.setColor(Ui.surface(getContext()));
             preview.setBackground(circle); preview.setClipToOutline(true);
             if (single && normalization > 0) preview.setTranslationY(-(stockIconSize - previewSize) / 2f);
-            List<String> appKeys = sortedApps(folder, apps, followChanges);
+            List<String> appKeys = sortedApps(folder, apps, followChanges, hideUnavailable);
             for (int i = 0; i < 4; i++) {
                 ImageView icon = new ImageView(getContext());
                 if (i < appKeys.size()) {
@@ -286,7 +287,7 @@ final class FolderRow extends FrameLayout {
                 if (normalization > 0) gap += (stockIconSize - previewSize) / 2f;
                 label.setTranslationY(gap);
             }
-            card.setFocusable(true); card.setContentDescription(folder.name + ", " + folder.apps.size() + " apps");
+            card.setFocusable(true); card.setContentDescription(folder.name + ", " + Ui.appCount(getContext(), appKeys.size()));
             card.setOnClickListener(v -> open(folder, v)); card.setOnLongClickListener(v -> { settings(); return true; });
             content.addView(card, new LinearLayout.LayoutParams(single ? -1 : Ui.dp(getContext(), 96), -1));
         }
@@ -331,10 +332,10 @@ final class FolderRow extends FrameLayout {
         LinearLayout panel = Ui.column(context, 16); panel.setBackground(Ui.cardBackground(context));
         TextView title = Ui.text(context, folder.name, 24); title.setTypeface(Typeface.DEFAULT_BOLD); title.setMaxLines(2);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END); panel.addView(title); panel.addView(Ui.spacer(context, 6));
-        panel.addView(Ui.secondary(context, (folder.profile.equals("work") ? "Work" : "Personal") + " · " + folder.apps.size()
-                + (folder.apps.size() == 1 ? " app" : " apps"), 14)); panel.addView(Ui.spacer(context, 16));
+        List<String> keys = sortedApps(folder, apps, followChanges, hideUnavailable);
+        panel.addView(Ui.secondary(context, (folder.profile.equals("work") ? "Work" : "Personal") + " · "
+                + Ui.appCount(context, keys.size()), 14)); panel.addView(Ui.spacer(context, 16));
         ScrollView scroll = new ScrollView(context); GridLayout grid = new GridLayout(context); grid.setColumnCount(columns); scroll.addView(grid);
-        List<String> keys = sortedApps(folder, apps, followChanges);
         for (int i = 0; i < keys.size(); i++) {
             AppEntry app = entry(keys.get(i)); String key = app.key;
             LinearLayout item = Ui.column(context, 8); item.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
@@ -383,7 +384,8 @@ final class FolderRow extends FrameLayout {
         }
         int desired = Ui.dp(context, Math.max(1, (keys.size() + columns - 1) / columns) * 112 * scale);
         int height = Math.min(desired, Math.max(Ui.dp(context, 64), Math.min(Ui.dp(context, 420), availableHeight - Ui.dp(context, 190 * scale))));
-        if (keys.isEmpty()) panel.addView(Ui.secondary(context, "No apps yet. Choose apps in folder settings.", 16));
+        if (keys.isEmpty()) panel.addView(Ui.secondary(context,
+                Ui.string(context, folder.apps.isEmpty() ? "empty_folder" : "no_available_apps"), 16));
         else panel.addView(scroll, new LinearLayout.LayoutParams(-1, height));
         panel.addView(Ui.spacer(context, 12));
         LinearLayout actions = new LinearLayout(context); actions.setGravity(Gravity.END);
