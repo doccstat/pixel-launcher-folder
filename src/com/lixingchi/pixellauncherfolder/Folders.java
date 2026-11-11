@@ -53,7 +53,7 @@ final class Folders {
         if (raw == null || raw.length() > MAX_BYTES) throw new JSONException("Invalid configuration size");
         JSONObject root = new JSONObject(raw);
         if (root.getInt("version") != 1) throw new JSONException("Unsupported folder format");
-        keepInDrawer(raw); followAppChanges(raw);
+        keepInDrawer(raw); followAppChanges(raw); hideUnavailable(raw);
         JSONArray array = root.getJSONArray("folders");
         if (array.length() > MAX_FOLDERS) throw new JSONException("Too many folders");
         List<Folder> result = new ArrayList<>();
@@ -90,12 +90,17 @@ final class Folders {
     static String encode(List<Folder> folders, boolean keep) throws JSONException { return encode(folders, keep, true); }
 
     static String encode(List<Folder> folders, boolean keep, boolean follow) throws JSONException {
+        return encode(folders, keep, follow, true);
+    }
+
+    static String encode(List<Folder> folders, boolean keep, boolean follow, boolean hide) throws JSONException {
         JSONArray array = new JSONArray();
         for (Folder folder : folders) {
             array.put(new JSONObject().put("id", folder.id).put("name", folder.name.trim()).put("profile", folder.profile).put("serial", folder.serial)
                     .put("apps", new JSONArray(folder.apps)));
         }
-        String raw = new JSONObject().put("version", 1).put("keepInDrawer", keep).put("followAppChanges", follow).put("folders", array).toString();
+        String raw = new JSONObject().put("version", 1).put("keepInDrawer", keep).put("followAppChanges", follow)
+                .put("hideUnavailable", hide).put("folders", array).toString();
         parse(raw); // Reject invalid changes before touching durable state.
         return raw;
     }
@@ -138,7 +143,8 @@ final class Folders {
         try {
             if (!children(context, tree).containsKey(".pixel-launcher-folders.json")) return;
             ImportResult external = importTree(context);
-            String raw = encode(external.folders, external.keep, external.follow);
+            if (external.skipped != 0) return; // A locked profile must not erase saved assignments on startup.
+            String raw = encode(external.folders, external.keep, external.follow, external.hide);
             if (!raw.equals(readInternal(context))) {
                 preferences(context).edit().putString("json", raw).commit();
                 notifyChange(context);
@@ -155,7 +161,11 @@ final class Folders {
     }
 
     static void save(Context context, List<Folder> folders, boolean keep, boolean follow) throws JSONException {
-        String raw = encode(folders, keep, follow);
+        save(context, folders, keep, follow, hideUnavailable(read(context)));
+    }
+
+    static void save(Context context, List<Folder> folders, boolean keep, boolean follow, boolean hide) throws JSONException {
+        String raw = encode(folders, keep, follow, hide);
         if (!preferences(context).edit().putString("json", raw).commit())
             throw new IllegalStateException("Could not save folders");
         notifyChange(context);
@@ -179,10 +189,10 @@ final class Folders {
 
     static final class ImportResult {
         final List<Folder> folders;
-        final boolean keep, follow;
+        final boolean keep, follow, hide;
         final int skipped;
-        ImportResult(List<Folder> folders, boolean keep, boolean follow, int skipped) {
-            this.folders = folders; this.keep = keep; this.follow = follow; this.skipped = skipped;
+        ImportResult(List<Folder> folders, boolean keep, boolean follow, boolean hide, int skipped) {
+            this.folders = folders; this.keep = keep; this.follow = follow; this.hide = hide; this.skipped = skipped;
         }
     }
 
@@ -248,10 +258,12 @@ final class Folders {
                 output.write(text.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
             manifestFolders.put(new JSONObject().put("id", folder.id).put("name", folder.name)
-                    .put("profile", folder.profile).put("serial", folder.serial).put("file", file));
+                    .put("profile", folder.profile).put("serial", folder.serial).put("file", file)
+                    .put("apps", new JSONArray(folder.apps)));
         }
         JSONObject manifest = new JSONObject().put("version", 1).put("keepInDrawer", keepInDrawer(readInternal(context)))
-                .put("followAppChanges", followAppChanges(readInternal(context))).put("folders", manifestFolders);
+                .put("followAppChanges", followAppChanges(readInternal(context)))
+                .put("hideUnavailable", hideUnavailable(readInternal(context))).put("folders", manifestFolders);
         String oldManifestText = current.containsKey(".pixel-launcher-folders.json")
                 ? readFile(context, current.get(".pixel-launcher-folders.json")) : null;
         if (oldManifestText != null) {
@@ -289,16 +301,38 @@ final class Folders {
         return result;
     }
 
-    private static List<String> resolveApps(Context context, String profile, long serial, List<String> names) throws Exception {
-        List<AppEntry> available = AppEntry.list(context, profile, serial);
-        Map<String, String> components = new HashMap<>();
-        for (AppEntry entry : available) components.putIfAbsent(entry.info.getComponentName().getPackageName(), entry.key);
-        List<String> result = new ArrayList<>(); HashSet<String> seen = new HashSet<>();
+    static List<String> restoreApps(List<String> names, List<String> saved, List<AppEntry> available) {
+        Map<String, List<String>> components = new HashMap<>();
+        for (String key : saved) {
+            ComponentName component = ComponentName.unflattenFromString(key);
+            if (component != null) components.computeIfAbsent(component.getPackageName(), p -> new ArrayList<>()).add(key);
+        }
+        for (AppEntry entry : available)
+            components.putIfAbsent(entry.info.getComponentName().getPackageName(), java.util.Collections.singletonList(entry.key));
+        Set<String> result = new java.util.LinkedHashSet<>();
         for (String name : names) {
-            String component = name;
             ComponentName parsed = ComponentName.unflattenFromString(name);
-            if (parsed == null) component = components.get(name);
-            if (component != null && seen.add(component)) result.add(component);
+            if (parsed != null) result.add(parsed.flattenToString());
+            else if (components.containsKey(name)) result.addAll(components.get(name));
+        }
+        return new ArrayList<>(result);
+    }
+
+    static List<Folder> withoutUnavailable(Context context, List<Folder> folders, boolean follow) {
+        Map<String, Map<String, AppEntry>> profiles = new HashMap<>();
+        List<Folder> result = new ArrayList<>();
+        for (Folder folder : folders) {
+            List<String> kept = new ArrayList<>();
+            if (!folder.apps.isEmpty()) {
+                String group = folder.profile + ":" + folder.serial;
+                Map<String, AppEntry> apps = profiles.get(group);
+                if (apps == null) {
+                    apps = AppEntry.index(AppEntry.list(context, folder.profile, folder.serial));
+                    profiles.put(group, apps);
+                }
+                for (String key : folder.apps) if (AppEntry.resolve(key, apps, follow) != null) kept.add(key);
+            }
+            result.add(new Folder(folder.id, folder.name, folder.profile, folder.serial, kept));
         }
         return result;
     }
@@ -307,18 +341,27 @@ final class Folders {
         Uri tree = backupTree(context);
         if (tree == null) throw new IllegalStateException("Choose a backup folder first");
         Map<String, Uri> files = children(context, tree); Uri manifestUri = files.get(".pixel-launcher-folders.json");
-        List<Folder> result = new ArrayList<>(); int skipped = 0; boolean keep = true, follow = true;
+        List<Folder> current = parse(readInternal(context));
+        List<Folder> result = new ArrayList<>(); int skipped = 0; boolean keep = true, follow = true, hide = true;
         if (manifestUri != null) {
             JSONObject manifest = new JSONObject(readFile(context, manifestUri));
             if (manifest.getInt("version") != 1) throw new JSONException("Unsupported backup format");
             keep = manifest.optBoolean("keepInDrawer", true); follow = followAppChanges(manifest.toString());
+            hide = hideUnavailable(manifest.toString());
             JSONArray entries = manifest.getJSONArray("folders");
             for (int i = 0; i < entries.length(); i++) {
                 JSONObject item = entries.getJSONObject(i); Uri file = files.get(item.getString("file"));
                 if (file == null) continue;
                 String profile = item.optString("profile", "personal"); long serial = item.optLong("serial", -1);
                 try {
-                    List<String> apps = resolveApps(context, profile, serial, lines(readFile(context, file)));
+                    List<String> saved = new ArrayList<>();
+                    if (item.has("apps")) {
+                        JSONArray keys = item.getJSONArray("apps");
+                        for (int j = 0; j < keys.length(); j++) saved.add(keys.getString(j));
+                    } else for (Folder folder : current)
+                        if (folder.id.equals(item.getString("id")) && folder.profile.equals(profile) && folder.serial == serial)
+                            saved.addAll(folder.apps);
+                    List<String> apps = restoreApps(lines(readFile(context, file)), saved, AppEntry.list(context, profile, serial));
                     result.add(new Folder(item.getString("id"), item.getString("name"), profile, serial, apps));
                 } catch (Exception unavailable) { skipped++; }
             }
@@ -327,13 +370,13 @@ final class Folders {
                 if (!entry.getKey().toLowerCase(java.util.Locale.ROOT).endsWith(".txt")
                         || legacyManifest(entry.getKey())) continue;
                 String name = entry.getKey().substring(0, entry.getKey().length() - 4);
-                result.add(Folder.create(name, "personal", -1, resolveApps(context, "personal", -1,
-                        lines(readFile(context, entry.getValue())))));
+                result.add(Folder.create(name, "personal", -1, restoreApps(lines(readFile(context, entry.getValue())),
+                        java.util.Collections.emptyList(), AppEntry.list(context, "personal", -1))));
             }
         }
         result = withoutBackupArtifacts(result);
-        encode(result, keep, follow); // Validate bounds and component structure before returning.
-        return new ImportResult(result, keep, follow, skipped);
+        encode(result, keep, follow, hide); // Validate bounds and component structure before returning.
+        return new ImportResult(result, keep, follow, hide, skipped);
     }
 
     static boolean keepInDrawer(String raw) throws JSONException {
@@ -352,13 +395,26 @@ final class Folders {
         return (Boolean) value;
     }
 
+    static boolean hideUnavailable(String raw) throws JSONException {
+        JSONObject root = new JSONObject(raw);
+        if (!root.has("hideUnavailable")) return true;
+        Object value = root.get("hideUnavailable");
+        if (!(value instanceof Boolean)) throw new JSONException("Invalid unavailable-app option");
+        return (Boolean) value;
+    }
+
+    static void setHideUnavailable(Context context, boolean hide) throws JSONException {
+        String raw = read(context);
+        save(context, parse(raw), keepInDrawer(raw), followAppChanges(raw), hide);
+    }
+
     static void setFollowAppChanges(Context context, boolean follow) throws JSONException {
         String raw = read(context);
         save(context, parse(raw), keepInDrawer(raw), follow);
     }
 
     static void setKeepInDrawer(Context context, boolean keep) throws JSONException {
-        String raw = encode(parse(read(context)), keep, followAppChanges(read(context)));
+        String raw = encode(parse(read(context)), keep, followAppChanges(read(context)), hideUnavailable(read(context)));
         if (!preferences(context).edit().putString("json", raw).commit())
             throw new IllegalStateException("Could not save display option");
         notifyChange(context);

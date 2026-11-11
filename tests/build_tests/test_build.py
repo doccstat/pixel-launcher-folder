@@ -52,6 +52,21 @@ class BuildTests(unittest.TestCase):
                        SIGNING_KEY_PASSWORD="dummy", SIGNING_KEY_ALIAS="dummy")
             self.assert_refused(["--release"], env, "SIGNING_CERT_SHA256")
 
+    def test_instrumentation_uses_separate_package_and_valid_documents_provider(self):
+        original = (ROOT / "AndroidManifest.xml").read_bytes()
+        root = module.test_manifest(ROOT / "AndroidManifest.xml").getroot()
+        prefix = "{http://schemas.android.com/apk/res/android}"
+        self.assertEqual(root.get("package"), module.TEST_PACKAGE)
+        self.assertEqual(root.find("instrumentation").get(prefix + "targetPackage"), module.TEST_PACKAGE)
+        providers = root.find("application").findall("provider")
+        self.assertTrue(all(p.get(prefix + "authorities").startswith(module.TEST_PACKAGE + ".") for p in providers))
+        documents = next(p for p in providers if p.get(prefix + "name").endswith(".BackupDocuments"))
+        self.assertEqual(documents.get(prefix + "exported"), "true")
+        self.assertEqual(documents.get(prefix + "grantUriPermissions"), "true")
+        self.assertEqual(documents.get(prefix + "permission"), "android.permission.MANAGE_DOCUMENTS")
+        self.assertFalse(root.find("application").findall("meta-data"))
+        self.assertEqual((ROOT / "AndroidManifest.xml").read_bytes(), original)
+
     def test_manifest_has_stable_identity_and_no_instrumentation(self):
         root = ET.parse(ROOT / "AndroidManifest.xml").getroot()
         self.assertEqual(root.attrib["package"], "com.lixingchi.pixellauncherfolder")

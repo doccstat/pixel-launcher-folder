@@ -36,11 +36,11 @@ import java.util.Map;
 import java.util.Set;
 
 public final class MainActivity extends Activity {
-    private static final int PICK_BACKUP_TREE = 41;
+    private static final int PICK_BACKUP_TREE = 41, EXPORT_DIAGNOSTICS = 42;
     private List<Folders.Folder> folders;
     private LinearLayout body, page;
     private boolean settings;
-    private Dialog editorDialog, pickerDialog;
+    private Dialog editorDialog, pickerDialog, cleanupDialog;
     private final android.window.OnBackInvokedCallback settingsBack = () -> { settings = false; render(); };
     private final Map<String, AppEntry> icons = new HashMap<>();
     private int iconGeneration;
@@ -149,7 +149,9 @@ public final class MainActivity extends Activity {
         int padding = Ui.dp(this, 8); preview.setPadding(padding, padding, padding, padding);
         Map<String, AppEntry> profileIcons = new HashMap<>();
         for (String key : folder.apps) { AppEntry app = icons.get(folder.profile + ":" + folder.serial + ":" + key); if (app != null) profileIcons.put(key, app); }
-        List<String> sorted = FolderRow.sortedApps(folder, profileIcons, false);
+        boolean hide = true;
+        try { hide = Folders.hideUnavailable(Folders.read(this)); } catch (Exception ignored) { }
+        List<String> sorted = FolderRow.sortedApps(folder, profileIcons, false, hide);
         for (int i = 0; i < 4; i++) {
             ImageView icon = new ImageView(this); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
             if (i < sorted.size()) { AppEntry app = profileIcons.get(sorted.get(i)); if (app != null) try { icon.setImageDrawable(app.icon(this)); } catch (RuntimeException ignored) { } }
@@ -215,6 +217,15 @@ public final class MainActivity extends Activity {
             catch (Exception e) { message(e.getMessage()); render(); }
         });
         body.addView(follow); body.addView(Ui.secondary(this, "On by default. If a saved app entry disappears, use its only current entry in the same profile. Multiple entries need a choice in Choose apps. Off keeps exact entries. Following changes does not rewrite assignments.", 14));
+        Switch hide = new Switch(this); hide.setText(Ui.string(this, "hide_unavailable"));
+        hide.setTextColor(Ui.text(this)); hide.setTextSize(16); hide.setMinHeight(Ui.dp(this, 56));
+        try { hide.setChecked(Folders.hideUnavailable(Folders.read(this))); } catch (Exception e) { message(e.getMessage()); }
+        hide.setOnCheckedChangeListener((button, checked) -> {
+            try { Folders.setHideUnavailable(this, checked); Diagnostics.record("hideUnavailable=" + checked, null); }
+            catch (Exception e) { Diagnostics.record("hideUnavailable", e); message(e.getMessage()); render(); }
+        });
+        body.addView(hide); body.addView(Ui.secondary(this, Ui.string(this, "hide_unavailable_summary"), 14));
+        body.addView(Ui.textButton(this, Ui.string(this, "remove_unavailable"), this::removeUnavailable));
         body.addView(Ui.spacer(this, 28)); body.addView(Ui.sectionTitle(this, "Backup & restore")); body.addView(Ui.spacer(this, 12));
         Uri tree = Folders.backupTree(this);
         body.addView(Ui.text(this, tree == null ? "Keep a copy in Files" : "Backup folder connected", 20)); body.addView(Ui.spacer(this, 8));
@@ -229,6 +240,9 @@ public final class MainActivity extends Activity {
         body.addView(Ui.spacer(this, 28)); body.addView(Ui.sectionTitle(this, "Launcher setup")); body.addView(Ui.spacer(this, 12));
         body.addView(Ui.secondary(this, "1. Enable this module in Vector or LSPosed.\n2. Select Pixel Launcher only.\n3. Restart the launcher through its normal UI.", 15));
         body.addView(Ui.spacer(this, 12)); body.addView(Ui.secondary(this, "This app never changes module-manager settings or restarts other apps. Private Space is excluded.", 13));
+        body.addView(Ui.textButton(this, Ui.string(this, "export_diagnostics"), () ->
+                startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json")
+                        .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE, "pixel-launcher-folders-diagnostics.json"), EXPORT_DIAGNOSTICS)));
         body.addView(Ui.spacer(this, 28)); body.addView(Ui.sectionTitle(this, "Preview")); body.addView(Ui.spacer(this, 8));
         for (Profiles profile : Profiles.available(this)) body.addView(Ui.textButton(this, "Preview " + profileName(profile.kind) + " folders", () -> {
             android.widget.HorizontalScrollView viewport = new android.widget.HorizontalScrollView(this);
@@ -238,7 +252,7 @@ public final class MainActivity extends Activity {
     }
 
     private static String profileName(String kind) { return kind.equals("work") ? "Work" : "Personal"; }
-    private static String appCount(int count) { return count + (count == 1 ? " app" : " apps"); }
+    private String appCount(int count) { return Ui.appCount(this, count); }
     private String backupName(Uri tree) {
         try { return android.provider.DocumentsContract.getTreeDocumentId(tree).replace("primary:", "Internal storage / "); }
         catch (RuntimeException ignored) { return "Selected folder in Files"; }
@@ -249,13 +263,78 @@ public final class MainActivity extends Activity {
     }
     private void message(String value) { Toast.makeText(this, value, Toast.LENGTH_LONG).show(); }
 
+    private void removeUnavailable() {
+        final String original = Folders.read(this);
+        FolderRow.IO.execute(() -> {
+            try {
+                List<Folders.Folder> before = Folders.parse(original);
+                List<Folders.Folder> next = Folders.withoutUnavailable(this, before, Folders.followAppChanges(original));
+                String candidate = Folders.encode(next, Folders.keepInDrawer(original), Folders.followAppChanges(original), Folders.hideUnavailable(original));
+                StringBuilder removed = new StringBuilder();
+                for (int i = 0; i < before.size(); i++) for (String key : before.get(i).apps)
+                    if (!next.get(i).apps.contains(key)) removed.append(before.get(i).name).append(" · ").append(key).append('\n');
+                Diagnostics.record("reviewUnavailable", null);
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (removed.length() == 0) { message(Ui.string(this, "no_unavailable")); return; }
+                    cleanupDialog = new AlertDialog.Builder(this).setTitle(Ui.string(this, "remove_unavailable_title"))
+                            .setMessage(Ui.string(this, "remove_unavailable_summary", removed.toString()))
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .setPositiveButton(Ui.string(this, "remove_unavailable_confirm"), (d, w) ->
+                                    confirmRemoveUnavailable(original, candidate)).show();
+                    cleanupDialog.setOnDismissListener(d -> cleanupDialog = null);
+                });
+            } catch (Exception error) {
+                Diagnostics.record("reviewUnavailable", error);
+                runOnUiThread(() -> message(Ui.string(this, "cleanup_failed")));
+            }
+        });
+    }
+
+    private void confirmRemoveUnavailable(String original, String candidate) {
+        FolderRow.IO.execute(() -> {
+            try {
+                List<Folders.Folder> next = Folders.withoutUnavailable(this, Folders.parse(original), Folders.followAppChanges(original));
+                String current = Folders.encode(next, Folders.keepInDrawer(original), Folders.followAppChanges(original), Folders.hideUnavailable(original));
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (!original.equals(Folders.read(this)) || !candidate.equals(current)) {
+                        message(Ui.string(this, "cleanup_changed")); return;
+                    }
+                    if (save(next)) {
+                        Diagnostics.record("removeUnavailable", null);
+                        message(Ui.string(this, "remove_unavailable_done"));
+                    }
+                });
+            } catch (Exception error) {
+                Diagnostics.record("removeUnavailable", error);
+                runOnUiThread(() -> message(Ui.string(this, "cleanup_failed")));
+            }
+        });
+    }
+
     private void chooseBackupFolder() {
         startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION), PICK_BACKUP_TREE);
     }
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_BACKUP_TREE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == EXPORT_DIAGNOSTICS) {
+            Uri target = data.getData();
+            FolderRow.IO.execute(() -> {
+                try (java.io.OutputStream output = getContentResolver().openOutputStream(target, "wt")) {
+                    if (output == null) throw new java.io.IOException("No output stream");
+                    output.write(Diagnostics.collect(this).toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    runOnUiThread(() -> message(Ui.string(this, "diagnostics_saved")));
+                } catch (Exception error) {
+                    Diagnostics.record("exportDiagnostics", error);
+                    runOnUiThread(() -> message(Ui.string(this, "operation_failed")));
+                }
+            });
+            return;
+        }
+        if (requestCode != PICK_BACKUP_TREE) return;
         Uri tree = data.getData(); int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         try { getContentResolver().takePersistableUriPermission(tree, flags); Folders.setBackupTree(this, tree); render(); message("Backup folder selected. Choose Import or Export."); }
         catch (RuntimeException error) { message("Could not keep access to that folder"); }
@@ -268,7 +347,7 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Replace folder assignments?")
                 .setMessage("Import reads your selected backup folder. Current assignments are replaced; installed apps are never changed.")
                 .setNegativeButton("Cancel", null).setPositiveButton("Import", (d, w) -> {
-                    try { Folders.ImportResult imported = Folders.importTree(this); Folders.save(this, imported.folders, imported.keep, imported.follow);
+                    try { Folders.ImportResult imported = Folders.importTree(this); Folders.save(this, imported.folders, imported.keep, imported.follow, imported.hide);
                         folders = imported.folders; render(); loadIcons(); message(imported.skipped == 0 ? "Folders imported" : "Folders imported; unavailable profiles were skipped"); }
                     catch (Exception error) { message("Import failed: " + error.getMessage()); }
                 }).show();

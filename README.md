@@ -42,14 +42,28 @@ Folders refresh when Android reports an app change, including an open folder.
 entry is preferred, but if it disappears, the app's only current entry in the
 same profile is used for its icon, name, launch, drag, and folder-only filtering.
 Following a replacement does not rewrite assignments. Turn this off to require
-exact entries. If an app has several possible replacement entries, it remains unavailable;
-use **Choose apps** to remove the old entry and select the intended one.
+exact entries. If an app has several possible replacement entries, use
+**Choose apps** to remove the old entry and select the intended one.
+
+## Unavailable apps
+
+**Settings → Hide unavailable apps** is on by default. Missing entries are hidden
+from folder previews and contents, but their assignments are remembered. They
+reappear when available in the same profile. Turn this off to show placeholders.
+**Choose apps** always includes missing assignments so you can edit them.
+
+**Settings → Remove unavailable assignments…** reviews the exact entries before
+you confirm removal. It is a one-time cleanup, not automatic deletion. All saved
+profiles must be unlocked and resumed. Availability and configuration are checked
+again before saving; a changed result requires another review.
 
 ## Backup and restore
 
 Choose a folder through Android's document picker. Export writes editable text
 files plus a JSON manifest containing folder order, IDs, profile identity, and
-settings. Import accepts that manifest or plain `.txt` files. Import changes
+settings, including unavailable-app visibility and saved components for missing
+apps. Legacy manifests reuse matching local assignments where available. Import
+accepts that manifest or plain `.txt` files. Import changes
 only this module's folder configuration; it never installs, removes, disables,
 or modifies applications.
 
@@ -70,7 +84,14 @@ or modifies applications.
 
 Report issues at the [source repository](https://github.com/doccstat/pixel-launcher-folder/issues)
 with the device model, Android version, Pixel Launcher version, module version,
-and reproduction steps.
+and reproduction steps. **Settings → Export diagnostics** saves a JSON report
+through Files with versions, display options, per-profile availability counts,
+and recent settings/cleanup results. It omits folder names, app assignments,
+storage paths and device identifiers; nothing is uploaded.
+
+The source UI language is English, used as the fallback for all device languages.
+New settings use Android string resources; counts follow the device locale and
+layout follows its text direction.
 
 ## Disclaimer
 
