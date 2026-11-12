@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
     private final android.window.OnBackInvokedCallback settingsBack = () -> { settings = false; render(); };
     private final Map<String, AppEntry> icons = new HashMap<>();
     private int iconGeneration;
+    private boolean iconsLoaded;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -152,14 +153,18 @@ public final class MainActivity extends Activity {
         boolean hide = true;
         try { hide = Folders.hideUnavailable(Folders.read(this)); } catch (Exception ignored) { }
         List<String> sorted = FolderRow.sortedApps(folder, profileIcons, false, hide);
+        int shown = 0;
         for (int i = 0; i < 4; i++) {
             ImageView icon = new ImageView(this); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            if (i < sorted.size()) { AppEntry app = profileIcons.get(sorted.get(i)); if (app != null) try { icon.setImageDrawable(app.icon(this)); } catch (RuntimeException ignored) { } }
+            if (i < sorted.size()) { AppEntry app = profileIcons.get(sorted.get(i)); if (app != null) try { icon.setImageDrawable(app.icon(this)); shown++; }
+                catch (RuntimeException error) { Ui.iconFailed("folder list", sorted.get(i), error); } }
             android.widget.GridLayout.LayoutParams params = new android.widget.GridLayout.LayoutParams(
                     android.widget.GridLayout.spec(i / 2, 1, android.widget.GridLayout.FILL, 1f),
                     android.widget.GridLayout.spec(i % 2, 1, android.widget.GridLayout.FILL, 1f));
             params.width = 0; params.height = 0; params.setMargins(1, 1, 1, 1); preview.addView(icon, params);
         }
+        // Icons load asynchronously; only fall back once loading finished, so the glyph never flashes.
+        if (shown == 0 && iconsLoaded) Ui.emptyPreview(preview);
         preview.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO); return preview;
     }
 
@@ -182,10 +187,10 @@ public final class MainActivity extends Activity {
                             if (entry != null) loaded.put(group + ":" + key, entry);
                         }
                     }
-                } catch (RuntimeException ignored) { }
+                } catch (RuntimeException error) { Ui.iconFailed("folder list", "profile " + group, error); }
             }
             runOnUiThread(() -> { if (!isFinishing() && !isDestroyed() && generation == iconGeneration) {
-                icons.clear(); icons.putAll(loaded); if (!settings) render();
+                icons.clear(); icons.putAll(loaded); iconsLoaded = true; if (!settings) render();
             } });
         });
     }
@@ -441,7 +446,7 @@ public final class MainActivity extends Activity {
                 boolean elsewhere = Folders.assignedElsewhere(folders, current, profile.kind, profile.serial, Profiles.personalSerial(MainActivity.this), entry.key, available.keySet(), follow);
                 LinearLayout row = recycled instanceof LinearLayout ? (LinearLayout) recycled : new LinearLayout(MainActivity.this);
                 row.removeAllViews(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 12), Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 12)); row.setMinimumHeight(Ui.dp(MainActivity.this, 64));
-                ImageView icon = new ImageView(MainActivity.this); try { icon.setImageDrawable(entry.icon(MainActivity.this)); } catch (RuntimeException ignored) { }
+                ImageView icon = new ImageView(MainActivity.this); try { icon.setImageDrawable(entry.icon(MainActivity.this)); } catch (RuntimeException error) { Ui.iconFailed("app picker", entry.key, error); }
                 row.addView(icon, new LinearLayout.LayoutParams(Ui.dp(MainActivity.this, 40), Ui.dp(MainActivity.this, 40)));
                 LinearLayout copy = Ui.column(MainActivity.this, 0); copy.setPadding(Ui.dp(MainActivity.this, 12), 0, Ui.dp(MainActivity.this, 8), 0);
                 TextView label = Ui.text(MainActivity.this, entry.info == null ? "Unavailable app" : entry.label, 16); label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); copy.addView(label);

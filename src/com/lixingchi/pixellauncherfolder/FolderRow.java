@@ -261,10 +261,12 @@ final class FolderRow extends FrameLayout {
             preview.setBackground(circle); preview.setClipToOutline(true);
             if (single && normalization > 0) preview.setTranslationY(-(stockIconSize - previewSize) / 2f);
             List<String> appKeys = sortedApps(folder, apps, followChanges, hideUnavailable);
+            int shown = 0;
             for (int i = 0; i < 4; i++) {
                 ImageView icon = new ImageView(getContext());
                 if (i < appKeys.size()) {
-                    try { icon.setImageDrawable(entry(appKeys.get(i)).icon(getContext())); } catch (RuntimeException ignored) { }
+                    try { icon.setImageDrawable(entry(appKeys.get(i)).icon(getContext())); shown++; }
+                    catch (RuntimeException error) { Ui.iconFailed("folder preview", appKeys.get(i), error); }
                 }
                 icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 FrameLayout slot = new FrameLayout(getContext());
@@ -275,6 +277,7 @@ final class FolderRow extends FrameLayout {
                 slotParams.width = 0; slotParams.height = 0;
                 preview.addView(slot, slotParams);
             }
+            if (shown == 0) Ui.emptyPreview(preview);
             card.addView(preview, new LinearLayout.LayoutParams(previewSize, previewSize));
             TextView label = Ui.text(getContext(), folder.name, 14); label.setMaxLines(1);
             if (single && stockTextSize > 0) label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, stockTextSize);
@@ -341,7 +344,7 @@ final class FolderRow extends FrameLayout {
             LinearLayout item = Ui.column(context, 8); item.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
             item.setMinimumHeight(Ui.dp(context, 104 * scale)); item.setBackground(Ui.ripple(context, android.graphics.Color.TRANSPARENT, 16));
             ImageView icon = new ImageView(context); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            try { icon.setImageDrawable(app.icon(context)); } catch (RuntimeException ignored) { }
+            try { icon.setImageDrawable(app.icon(context)); } catch (RuntimeException error) { Ui.iconFailed("folder popup", key, error); }
             item.addView(icon, new LinearLayout.LayoutParams(Ui.dp(context, 48), Ui.dp(context, 48))); item.addView(Ui.spacer(context, 8));
             TextView label = Ui.text(context, app.info == null ? "Unavailable" : app.label, 13); label.setGravity(Gravity.CENTER); label.setMaxLines(2);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END); item.addView(label);
