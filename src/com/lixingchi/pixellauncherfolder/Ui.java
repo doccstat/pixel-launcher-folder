@@ -158,6 +158,20 @@ final class Ui {
         @Override public void setColorFilter(android.graphics.ColorFilter filter) { paint.setColorFilter(filter); }
         @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
+    /** Shown instead of a blank circle when no preview icon could be drawn. */
+    static void emptyPreview(android.widget.GridLayout preview) {
+        Context c = preview.getContext(); preview.removeAllViews();
+        ImageView glyph = new ImageView(c); glyph.setImageDrawable(new FolderGlyph(primary(c)));
+        glyph.setScaleType(ImageView.ScaleType.FIT_CENTER); int inset = dp(c, 6); glyph.setPadding(inset, inset, inset, inset);
+        android.widget.GridLayout.LayoutParams params = new android.widget.GridLayout.LayoutParams(
+                android.widget.GridLayout.spec(0, 2, android.widget.GridLayout.FILL, 1f),
+                android.widget.GridLayout.spec(0, 2, android.widget.GridLayout.FILL, 1f));
+        params.width = 0; params.height = 0; preview.addView(glyph, params);
+    }
+    /** Icon failures were swallowed silently; keep them visible in logcat for diagnosis. */
+    static void iconFailed(String where, String key, RuntimeException error) {
+        android.util.Log.w("PixelLauncherFolders", "Could not load " + where + " icon for " + key, error);
+    }
     static TextView badge(Context c, String value) {
         TextView badge = text(c, value, 12); badge.setTextColor(primary(c)); badge.setGravity(Gravity.CENTER);
         badge.setTypeface(Typeface.DEFAULT_BOLD); badge.setPadding(dp(c, 10), dp(c, 6), dp(c, 10), dp(c, 6)); badge.setBackground(rounded(c)); return badge;
